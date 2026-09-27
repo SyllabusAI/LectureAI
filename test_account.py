@@ -550,6 +550,79 @@ def t16():
 results.append(run("a refusal says which one it was, and the allowance one says how much is left", t16))
 
 
+def t16b():
+    # A truncated chunk's halves each go up metered on their own length, and
+    # a retry after the second half fails meters that half and nothing more:
+    # not the whole chunk again, not the half that already came back.
+    signed_in()
+    work = config.WORK_DIR / "metered"
+    work.mkdir(parents=True, exist_ok=True)
+    src = work / "lecture.m4a"
+    src.write_bytes(b"x" * 1000)
+    checkpoint = work / "checkpoint"
+    chunk = config.CHUNK_SECONDS
+    long_text = " ".join(["word"] * config.TRUNCATION_WORD_THRESHOLD)
+    posted = []
+
+    def fake_split(path, work_dir, seconds):
+        path = Path(path)
+        if path == src:
+            names = ["chunk_001", "chunk_002"]
+        else:
+            names = [f"{path.stem}.{n}" for n in range(2)]
+        out = [Path(work_dir) / f"{n}.m4a" for n in names]
+        for p in out:
+            p.write_bytes(b"x" * 1000)
+        return out
+
+    def fake_duration(path):
+        name = Path(path).stem
+        if not name.startswith("chunk_"):
+            return 2.0 * chunk
+        return chunk / 2 ** name.count(".")
+
+    def fake_post(fail):
+        def post(url, token, path, seconds, timeout):
+            name = Path(path).stem
+            posted.append((name, seconds))
+            if name == fail:
+                return FakeResponse(502, {"error": "provider_unavailable"})
+            return FakeResponse(200, {"text": long_text if name == "chunk_002"
+                                      else f"words of {name}"})
+        return post
+
+    saved = {name: getattr(transcribe_module, name)
+             for name in ("split", "duration_seconds", "log")}
+    real_post = providers._post_audio
+    transcribe_module.split = fake_split
+    transcribe_module.duration_seconds = fake_duration
+    transcribe_module.log = lambda msg: None
+    try:
+        providers._post_audio = fake_post("chunk_002.1")
+        try:
+            transcribe_module.transcribe(src, provider=providers.ProxyProvider(),
+                                         checkpoint=checkpoint)
+        except providers.ProxyRefused:
+            pass
+        else:
+            raise AssertionError("the refusal on the second half was swallowed")
+        assert posted == [("chunk_001", chunk), ("chunk_002", chunk),
+                          ("chunk_002.0", chunk / 2), ("chunk_002.1", chunk / 2)], posted
+        posted.clear()
+        providers._post_audio = fake_post(None)
+        text = transcribe_module.transcribe(src, provider=providers.ProxyProvider(),
+                                            checkpoint=checkpoint)
+    finally:
+        providers._post_audio = real_post
+        for name, value in saved.items():
+            setattr(transcribe_module, name, value)
+    assert posted == [("chunk_002.1", chunk / 2)], f"the retry re-metered: {posted}"
+    assert text == "words of chunk_001\n\nwords of chunk_002.0\n\nwords of chunk_002.1", text
+    import shutil
+    shutil.rmtree(work, ignore_errors=True)
+results.append(run("a truncated chunk's halves are metered on their own length, once", t16b))
+
+
 def t17():
     signed_in()
     seen = {}

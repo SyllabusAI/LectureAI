@@ -185,6 +185,12 @@ def menu_items(status: dict | None, attached: bool, login_installed: bool) -> li
     if active:
         items.append({"title": "Stop Recording", "action": "record_stop",
                       "enabled": True, "checked": False})
+    elif reachable and (status.get("consent") or {}).get("given") is False:
+        # The recorder refuses until permission to record is on file, and the
+        # question is on the dashboard, so this opens it rather than failing
+        # quietly into the log.
+        items.append({"title": "Confirm Permission to Record…", "action": "open",
+                      "enabled": True, "checked": False})
     else:
         now = (status or {}).get("now_class") or ""
         items.append({"title": f"Record {now}" if now else "Start Recording",

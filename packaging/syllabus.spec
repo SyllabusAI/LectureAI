@@ -35,6 +35,16 @@ binaries = [(str(FFMPEG_DIR / name), "ffmpeg") for name in ("ffmpeg", "ffprobe")
 datas += [(str(FFMPEG_DIR / name), "ffmpeg")
           for name in ("LICENSE.md", "COPYING.LGPLv2.1", "BUILD.txt")]
 
+# EventKit, for Apple Calendar and Apple Reminders (intake/calendars.py). It is
+# imported inside a function, so it is named here rather than left to the
+# import scan; the [app] extra installs it. A build without it still works and
+# files Apple Calendar through AppleScript instead.
+try:
+    import EventKit  # noqa: F401
+    calendar_imports = ["EventKit", "Foundation"]
+except ImportError:
+    calendar_imports = []
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT)],
@@ -42,7 +52,7 @@ a = Analysis(
     datas=datas,
     # cli.py imports each subcommand's module inside a function; listing the
     # package makes sure none is left out of the bundle.
-    hiddenimports=collect_submodules("intake"),
+    hiddenimports=collect_submodules("intake") + calendar_imports,
     hookspath=[],
     runtime_hooks=[],
     # Nothing here is used at run time; leaving them out keeps the bundle
@@ -90,5 +100,21 @@ app = BUNDLE(
         # Shown by macOS the first time a recording opens the microphone.
         "NSMicrophoneUsageDescription":
             "Syllabus records your lectures from this microphone.",
+        # Shown the first time Apple Calendar or Apple Reminders is switched
+        # on in Setup. macOS 14 and later read the FullAccess keys; macOS 13
+        # reads the older two. Full access, not write-only: Syllabus has to
+        # find its own calendar by name before it can add to it.
+        "NSCalendarsFullAccessUsageDescription":
+            "Syllabus adds the deadlines from your lectures to a calendar you choose.",
+        "NSCalendarsUsageDescription":
+            "Syllabus adds the deadlines from your lectures to a calendar you choose.",
+        "NSRemindersFullAccessUsageDescription":
+            "Syllabus adds the deadlines from your lectures to a reminders list you choose.",
+        "NSRemindersUsageDescription":
+            "Syllabus adds the deadlines from your lectures to a reminders list you choose.",
+        # Only used when EventKit is missing from a build and Apple Calendar
+        # falls back to AppleScript.
+        "NSAppleEventsUsageDescription":
+            "Syllabus adds the deadlines from your lectures to Calendar.",
     },
 )
