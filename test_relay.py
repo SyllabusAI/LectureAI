@@ -519,6 +519,96 @@ def t16():
 results.append(run("a healthy status poll is not worth a line, anything else is", t16))
 
 
+def t17():
+    # The service may publish panels on a host of its own (PANEL_ORIGIN in
+    # syllabus-accounts), so the panel's pages are never same-origin with
+    # the account pages. It says where in the welcome, and that is the
+    # address the Setup page and the doctor should show.
+    from intake import doctor
+    account.save(ME)
+    clock = Clock()
+    panels = "https://panels.example/p/d1/"
+    try:
+        relay._published.clear()
+        relay.state_file().unlink(missing_ok=True)
+        assert relay.panel_url() == SERVICE + "/p/d1/", "nothing said yet: the address under ACCOUNTS_URL"
+
+        sock = FakeSocket([], [
+            ("open", None),
+            ("message", {"t": "welcome", "device": "d1", "chunk_bytes": 2048, "panel_url": panels}),
+            ("close", (1006, "")),
+        ])
+        r = relay.Relay(echo, socket_factory=sock.factory, sleep=clock.sleep, now=clock.now)
+        r.run(rounds=1)
+        assert relay.panel_url() == panels, relay.panel_url()
+        assert r.status()["url"] == panels, r.status()
+        # Another process (the doctor) reads it from the state file.
+        relay._published.clear()
+        assert relay.read_state_file()["published_url"] == panels, relay.read_state_file()
+        assert relay.panel_url() == panels
+        check = doctor.check_panel_web()
+        assert panels in check.detail, check
+    finally:
+        relay._published.clear()
+        relay.state_file().unlink(missing_ok=True)
+        account.forget()
+results.append(run("the panel's address is the one the service's welcome names", t17))
+
+
+def t18():
+    account.save(ME)
+    clock = Clock()
+    try:
+        bad = [
+            "javascript:alert(1)//p/d1/",
+            "http://panels.example/p/d1/",        # plain http while the service is https
+            "https://panels.example/p/d2/",       # another device
+            "https://panels.example/p/d1/setup",  # not the panel's root
+            "https://panels.example/p/d1/?x=1",
+            "https://panels.example/p/d1/#x",
+            "https://user@panels.example/p/d1/",
+            "https:///p/d1/",
+            "https://panels.example/p/d1/" + "x" * 600,
+            42,
+            None,
+        ]
+        for url in bad:
+            assert relay.published_url(url, "d1") == "", url
+        assert relay.published_url("https://panels.example/p/d1/", "d1") == "https://panels.example/p/d1/"
+
+        # A welcome naming a bad address, or naming another device, changes nothing.
+        relay._published.clear()
+        relay.state_file().unlink(missing_ok=True)
+        sock = FakeSocket([], [
+            ("open", None),
+            ("message", {"t": "welcome", "device": "d1", "panel_url": "javascript:alert(1)//p/d1/"}),
+            ("message", {"t": "welcome", "device": "d2", "panel_url": "https://panels.example/p/d2/"}),
+            ("message", {"t": "welcome", "device": "d1"}),
+            ("close", (1006, "")),
+        ])
+        r = relay.Relay(echo, socket_factory=sock.factory, sleep=clock.sleep, now=clock.now)
+        r.run(rounds=1)
+        assert relay.panel_url() == SERVICE + "/p/d1/", relay.panel_url()
+        assert r.status()["url"] == SERVICE + "/p/d1/", r.status()
+
+        # A state file left by another device is not this one's address.
+        relay.state_file().write_text(json.dumps({"device": "d2", "published_url": "https://panels.example/p/d2/"}))
+        assert relay.panel_url() == SERVICE + "/p/d1/"
+
+        # Local development: the service on plain http may name a plain http panel host.
+        saved = config.ACCOUNTS_URL
+        config.ACCOUNTS_URL = "http://localhost:8787"
+        try:
+            assert relay.published_url("http://127.0.0.1:8788/p/d1/", "d1") == "http://127.0.0.1:8788/p/d1/"
+        finally:
+            config.ACCOUNTS_URL = saved
+    finally:
+        relay._published.clear()
+        relay.state_file().unlink(missing_ok=True)
+        account.forget()
+results.append(run("a welcome's address is believed only when it is a plain web address for this device", t18))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
