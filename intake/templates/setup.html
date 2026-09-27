@@ -136,7 +136,6 @@
   .cal .hint { margin-top: 4px; }
   .cal .row { margin-top: 10px; }
   .cal input[type=text] { max-width: 260px; }
-  .cal .preview { color: var(--warn); }
   .check-fix code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--brand-soft); color: var(--brand-deep); padding: 1px 6px; border-radius: 5px; }
 
   .save-bar { display: flex; align-items: center; gap: 14px; margin: 6px 0 24px; flex-wrap: wrap; }
@@ -774,7 +773,6 @@ const CAL_TEXT = {
   apple_reminders: "Each deadline becomes a reminder, due that day, in a list of its own.",
   google_calendar: "Each deadline becomes an all-day event in a calendar {{ profile.title }} creates in your Google account. It can see only calendars it created.",
 };
-const CAL_PREVIEW = "Not ready for everyone yet. Google has not approved calendar access for {{ profile.title }}, so Google may warn that the app is unverified, or refuse. Leave it off unless you were asked to try it.";
 const CAL_STATE = {
   granted: "on", unknown: "off", not_determined: "off",
   denied: "bad", restricted: "bad", write_only: "bad", unavailable: "bad", error: "bad",
@@ -787,7 +785,6 @@ function renderCalendars(data) {
     <div class="cal" data-key="${escapeHtml(d.key)}">
       <label class="toggle"><input type="checkbox" class="calOn" ${d.enabled ? "checked" : ""}> ${escapeHtml(d.label)}</label>
       <div class="hint">${escapeHtml(CAL_TEXT[d.key] || "")}</div>
-      ${d.preview ? `<div class="hint preview">${escapeHtml(CAL_PREVIEW)}</div>` : ""}
       <div class="status-line" style="margin-top:8px">
         <span class="dot ${CAL_STATE[d.state] || "off"}"></span>
         <span class="calText">${escapeHtml(d.detail)}</span>

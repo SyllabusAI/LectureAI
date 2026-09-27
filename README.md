@@ -834,13 +834,11 @@ EventKit, which Syllabus.app bundles; a command line install needs
 `pipx inject intake pyobjc-framework-EventKit` for Reminders, and without it
 Apple Calendar falls back to AppleScript and macOS asks under Automation.
 
-**Google Calendar is not ready for everyone yet.** It uses the
+**Google Calendar reaches only its own calendar.** It uses the
 `calendar.app.created` permission, which reaches only calendars Syllabus made
 itself, and signs in separately from Drive (`calendar_token.json`, next to
-`token.json`), so it never touches the Drive connection. Until that
-permission is approved for the app in Google Cloud, Google may warn that the
-app is unverified, or refuse. Macs signed in to a Syllabus account still sign
-in to Google Calendar on this Mac.
+`token.json`), so it never touches the Drive connection. Macs signed in to a
+Syllabus account still sign in to Google Calendar on this Mac.
 
 **Nothing is filed twice.** Every to-do that reaches a calendar is recorded in
 `calendar_items.json` in the profile's home. Processing a lecture again skips

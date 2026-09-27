@@ -340,7 +340,7 @@ function calendarsWith(key, changes) {
   return out;
 }
 
-await run("each calendar is drawn with its state, and Google says it is not ready", async () => {
+await run("each calendar is drawn with its state, and none is labeled not ready", async () => {
   const page = loadPage(DIR, "setup.html", {
     routes: setupRoutes({
       "/api/calendar": calendarsWith("apple_reminders", {
@@ -358,8 +358,7 @@ await run("each calendar is drawn with its state, and Google says it is not read
   equal(reminders.querySelector(".dot").className, "dot bad", "denied access did not read as a problem");
   assert(/not allowed/.test(reminders.querySelector(".calText").textContent),
     "the reason access is missing was not shown");
-  assert(rows[2].querySelector(".preview"), "Google Calendar lost its not-ready label");
-  assert(!rows[0].querySelector(".preview"), "Apple Calendar was labeled not ready");
+  assert(!rows.some((r) => r.querySelector(".preview")), "a calendar was labeled not ready");
   equal(rows[0].querySelector(".calName").value, like("/api/calendar").destinations[0].name,
     "the calendar name was not filled in");
   await page.close();

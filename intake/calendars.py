@@ -806,8 +806,6 @@ def describe(key: str) -> dict:
     return {
         "key": key, "label": LABELS[key], "enabled": enabled(key),
         "name": calendar_name(key), "state": state, "detail": detail, "via": via,
-        # Google Calendar is waiting on the Cloud project: see the Setup page.
-        "preview": key == GOOGLE,
     }
 
 

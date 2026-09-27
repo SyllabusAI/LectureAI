@@ -748,7 +748,7 @@ def t16():
     keys = [d["key"] for d in data["destinations"]]
     assert keys == list(calendars.KEYS), keys
     google = data["destinations"][2]
-    assert google["preview"] and not google["enabled"], google
+    assert "preview" not in google and not google["enabled"], google
 
     asked = []
 
