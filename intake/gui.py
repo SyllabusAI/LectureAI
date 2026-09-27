@@ -1143,15 +1143,21 @@ def account_signout():
 def assistant_state():
     """Whether the assistant can run here, and what it can be asked about.
 
-    The panel asks this once on load to decide whether to enable the box. It
-    needs a key of its own: this path talks to Anthropic directly rather than
-    through the account service, so a managed Mac still has to have one set.
+    The panel asks this once on load to decide whether to enable the box. A
+    signed-in Mac asks through the account service (/proxy/assistant), which
+    decides per question whether the plan includes sessions; a Mac with no
+    account needs an Anthropic key of its own. No network call here: whether
+    the plan allows it is answered by the first question, not by this poll.
     """
+    managed = assistant.managed()
+    ready = managed or bool(config.ANTHROPIC_API_KEY)
     return jsonify({
         "ok": True,
-        "ready": bool(config.ANTHROPIC_API_KEY),
-        "reason": "" if config.ANTHROPIC_API_KEY else
-                  "Add an Anthropic API key in Setup to use the study assistant.",
+        "ready": ready,
+        "managed": managed,
+        "reason": "" if ready else
+                  "Sign in to your Syllabus account, or add an Anthropic API key "
+                  "in Setup, to use the study assistant.",
         "model": config.ASSISTANT_MODEL,
         "courses": assistant.courses(),
         "escalation": assistant.escalation_rate(),
@@ -1169,8 +1175,8 @@ def assistant_ask():
     """
     # No cross-site check here: signin.install(app) gates every request
     # already, and this route is not special enough to second-guess it.
-    if not config.ANTHROPIC_API_KEY:
-        return jsonify({"ok": False, "error": "no Anthropic API key is set"}), 409
+    if not assistant.managed() and not config.ANTHROPIC_API_KEY:
+        return jsonify({"ok": False, "error": "not signed in and no Anthropic API key is set"}), 409
 
     body = request.get_json(silent=True) or {}
     question = str(body.get("question", ""))
