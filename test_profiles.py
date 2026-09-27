@@ -21,7 +21,7 @@ HOME = fresh_home()  # before config is imported
 ROOT = HOME.parent
 
 from intake import cli, config, doctor, profiles, record, schemas, summarize  # noqa: E402
-from intake import setup_wizard  # noqa: E402
+from intake import consent, setup_wizard  # noqa: E402
 
 # The migration check looks for an older install next to the code, and during
 # tests "the code" is this checkout. Point it at an empty fake checkout.
@@ -188,11 +188,13 @@ def t10():
     names = [c.name for c in doctor.run_checks() if c.name not in ("older install", "older home")]
     assert names == ["Python", "ffmpeg", "home directory", "OpenAI key", "Anthropic key",
                      "class schedule", "Drive OAuth client", "Drive authorization",
-                     "Notion", "microphone", "Syllabus account"], names
+                     "Notion", "microphone", "permission to record",
+                     "Syllabus account"], names
     home = doctor.check_home()
     assert home.detail == f"{config.HOME_DIR} (default)".replace("(default)", "(from $INTAKE_HOME)"), home
     assert doctor.check_key("OpenAI key", "OPENAI_API_KEY").fix == "intake setup"
     assert doctor.check_drive_token().fix == "intake login"
+    assert doctor.check_consent().fix == "intake setup --consent"
     rendered = doctor.render(doctor.run_checks())
     assert "profile" not in rendered.lower(), "doctor's output gained a line it did not have"
 results.append(run("syllabus doctor runs the same checks, in the same order, with the same fixes", t10))
@@ -207,6 +209,7 @@ def t11():
     config.reload()
     assert config.OPENAI_API_KEY == "syl-openai" and config.NOTION_TOKEN == "syl-notion"
     saved_home = config.HOME_DIR
+    consent.record("setup")
     try:
         config.activate("sous")
         assert config.PROFILE is SOUS
@@ -242,10 +245,18 @@ def t11():
         assert config.flat_home() is None and config.legacy_files() == []
         assert setup_wizard.render_env({"OPENAI_API_KEY": "k"}, True).startswith("# Sous settings")
         assert setup_wizard.Wizard(ask=lambda _: "", say=lambda _: None).schedule_file.name == "calls.toml"
+        # Permission to record is per profile: syllabus has it, sous does
+        # not, and sous is told to fix it under its own name, in its own words.
+        assert config.CONSENT_FILE == config.HOME_DIR / "consent.json"
+        assert not consent.given(), "syllabus's permission to record leaked into sous"
+        assert consent.fix_command() == "intake --profile sous setup --consent"
+        assert "calls" in consent.statement() and "lectures" not in consent.statement()
     finally:
         config.activate(SYL)
         (ROOT / ".env").unlink(missing_ok=True)
     assert config.PROFILE is SYL and config.HOME_DIR == saved_home
+    assert consent.given() and "lectures" in consent.statement()
+    config.CONSENT_FILE.unlink()
     assert config.OPENAI_API_KEY == "syl-openai" and config.NOTION_TOKEN == "syl-notion"
     assert config.NOTION_TARGET == "weekly" and config.DRIVE_ROOT_FOLDER_NAME == "Lecture Notes"
     assert record.output_name(datetime(2026, 9, 6, 3, 0)) == "lecture_2026-09-06_0300.m4a"

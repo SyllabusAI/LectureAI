@@ -110,6 +110,9 @@
 
   .toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; cursor: pointer; }
   .toggle input { width: 18px; height: 18px; accent-color: var(--brand); margin: 0; }
+  /* A sentence, not a label: it wraps, so the box sits by its first line. */
+  .toggle.consent { align-items: flex-start; font-weight: 400; }
+  .toggle.consent input { flex: none; margin-top: 2px; }
 
   .status-line { display: flex; align-items: center; gap: 9px; font-size: 14px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
@@ -131,6 +134,11 @@
   .check-name { font-weight: 500; min-width: 140px; }
   .check-detail { color: var(--muted); font-weight: 300; word-break: break-word; }
   .check-fix { color: var(--warn); font-weight: 400; margin-top: 2px; }
+  .cal { padding: 14px 0; border-top: 1px solid var(--line); }
+  .cal:first-child { border-top: none; padding-top: 4px; }
+  .cal .hint { margin-top: 4px; }
+  .cal .row { margin-top: 10px; }
+  .cal input[type=text] { max-width: 260px; }
   .check-fix code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--brand-soft); color: var(--brand-deep); padding: 1px 6px; border-radius: 5px; }
 
   .save-bar { display: flex; align-items: center; gap: 14px; margin: 6px 0 24px; flex-wrap: wrap; }
@@ -253,15 +261,27 @@
       </div>
     </div>
 
+    <!-- 5. Permission to record -->
+    <div class="card" id="consentCard">
+      <h2><span class="step">5</span> Permission to record</h2>
+      <p class="lead">
+        Recording people who have not agreed to it can break school or workplace
+        rules, and the law. Confirm this once; you are not asked again before
+        each recording.
+      </p>
+      <label class="toggle consent"><input type="checkbox" id="consent" required> <span id="consentText">I have permission to record.</span></label>
+      <div class="hint" id="consentHint">Required before this Mac can record.</div>
+    </div>
+
     <div class="save-bar">
       <button type="submit" class="btn primary" id="save">Save settings</button>
       <div class="hint" id="saveHint"></div>
     </div>
   </form>
 
-  <!-- 5. Drive -->
+  <!-- 6. Drive -->
   <div class="card">
-    <h2><span class="step">5</span> Google Drive</h2>
+    <h2><span class="step">6</span> Google Drive</h2>
     <p class="lead">
       Summaries are filed as Google Docs in a "Lecture Notes" folder in your own Drive.
       Connecting opens Google in a new tab; sign in and allow access. The app can only see
@@ -277,9 +297,21 @@
     <div class="hint" id="driveHint"></div>
   </div>
 
+  <!-- Calendars -->
+  <div class="card" id="calendarCard">
+    <h2>Calendars <span style="font-weight:400;letter-spacing:0;text-transform:none">(optional)</span></h2>
+    <p class="lead">
+      Put every dated to-do on a calendar too. Each one is optional and works alongside
+      Notion. To-dos with no due date stay off your calendars, since there is no day to put
+      them on. Switching one on asks for permission right away, and the prompt appears on
+      this Mac.
+    </p>
+    <div id="calendars"><div class="hint">Checking&hellip;</div></div>
+  </div>
+
   <!-- Syllabus account -->
   <div class="card" id="accountCard" hidden>
-    <h2><span class="step">6</span> Syllabus account <span style="font-weight:400;letter-spacing:0;text-transform:none">(optional)</span></h2>
+    <h2><span class="step">7</span> Syllabus account <span style="font-weight:400;letter-spacing:0;text-transform:none">(optional)</span></h2>
     <p class="lead">
       Signing in ties this Mac to your Google identity, so later your class schedule and
       Drive connection can follow you to another Mac. Everything here works without it.
@@ -305,7 +337,7 @@
 
   <!-- Start at login -->
   <div class="card" id="loginCard">
-    <h2><span class="step">7</span> Keep it running</h2>
+    <h2><span class="step">8</span> Keep it running</h2>
     <p class="lead">
       Recording, transcribing, and your address on the web all need Syllabus to be
       running. Starting it when you log in means it is there for every class without
@@ -361,6 +393,7 @@ async function api(path, body) {
   if (!res.ok || data.ok === false) {
     const err = new Error(data.error || "request failed");
     err.row = data.row;
+    err.field = data.field;
     throw err;
   }
   return data;
@@ -454,8 +487,26 @@ function render(s) {
   $("notionToken").placeholder = s.notion.token_set ? "leave blank to keep the saved secret" : "ntn_...";
   $("notionDb").value = s.notion.database || "";
 
+  renderConsent(s.consent);
   renderDrive(s.drive);
-  $("done").style.display = (s.configured && (s.drive.connected || (s.drive.account && s.drive.account.connected))) ? "block" : "none";
+  $("done").style.display = (s.configured && (!s.consent || s.consent.given) && (s.drive.connected || (s.drive.account && s.drive.account.connected))) ? "block" : "none";
+}
+
+function renderConsent(c) {
+  // Once it is on file it stays ticked and cannot be unticked here: taking it
+  // back is not something a save should do by accident.
+  c = c || { given: false };
+  if (c.statement) $("consentText").textContent = c.statement;
+  $("consent").checked = !!c.given;
+  $("consent").disabled = !!c.given;
+  let when = "";
+  if (c.given && c.agreed_at) {
+    const d = new Date(c.agreed_at);
+    when = isNaN(d) ? "" : ` on ${d.toLocaleDateString()}`;
+  }
+  $("consentHint").textContent = c.given
+    ? `Confirmed${when}. This covers every recording on this Mac.`
+    : "Required before this Mac can record.";
 }
 
 function renderDrive(d) {
@@ -537,6 +588,11 @@ $("notionOn").onchange = () => { $("notionFields").hidden = !$("notionOn").check
 $("form").onsubmit = async (ev) => {
   ev.preventDefault();
   for (const tr of $("rows").querySelectorAll("tr")) tr.classList.remove("bad");
+  if (!$("consent").checked) {
+    flash("Tick \"I have permission to record\" before saving. It is required once, before this Mac can record.", true);
+    $("consent").focus();
+    return;
+  }
   $("save").disabled = true;
   $("saveHint").textContent = "Saving...";
   try {
@@ -551,6 +607,7 @@ $("form").onsubmit = async (ev) => {
         token: $("notionToken").value,
         database: $("notionDb").value,
       },
+      consent: $("consent").checked,
     });
     $("openai").value = ""; $("anthropic").value = ""; $("notionToken").value = "";
     flash(`Saved. ${out.classes} class meeting${out.classes === 1 ? "" : "s"} on the schedule.`);
@@ -561,6 +618,7 @@ $("form").onsubmit = async (ev) => {
     }
   } catch (e) {
     flash(e.message, true);
+    if (e.field === "consent") $("consent").focus();
     if (e.row) {
       const tr = $("rows").querySelectorAll("tr")[e.row - 1];
       if (tr) { tr.classList.add("bad"); tr.querySelector(".course").focus(); }
@@ -750,9 +808,120 @@ $("loginOn").onchange = async () => {
   finally { $("loginOn").disabled = false; }
 };
 
+// --- Calendars ------------------------------------------------------------------
+const CAL_TEXT = {
+  apple_calendar: "Each deadline becomes an all-day event in a calendar of its own.",
+  apple_reminders: "Each deadline becomes a reminder, due that day, in a list of its own.",
+  google_calendar: "Each deadline becomes an all-day event in a calendar {{ profile.title }} creates in your Google account. It can see only calendars it created.",
+};
+const CAL_STATE = {
+  granted: "on", unknown: "off", not_determined: "off",
+  denied: "bad", restricted: "bad", write_only: "bad", unavailable: "bad", error: "bad",
+};
+let calendarPoll = null;
+
+function renderCalendars(data) {
+  const box = $("calendars");
+  box.innerHTML = data.destinations.map(d => `
+    <div class="cal" data-key="${escapeHtml(d.key)}">
+      <label class="toggle"><input type="checkbox" class="calOn" ${d.enabled ? "checked" : ""}> ${escapeHtml(d.label)}</label>
+      <div class="hint">${escapeHtml(CAL_TEXT[d.key] || "")}</div>
+      <div class="status-line" style="margin-top:8px">
+        <span class="dot ${CAL_STATE[d.state] || "off"}"></span>
+        <span class="calText">${escapeHtml(d.detail)}</span>
+      </div>
+      <div class="row">
+        <input type="text" class="calName" aria-label="${escapeHtml(d.label)} name" value="${escapeHtml(d.name)}" spellcheck="false">
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn small calRename">Save name</button>
+          <button type="button" class="btn small calTest">Test</button>
+        </div>
+      </div>
+    </div>`).join("");
+  const c = data.connecting || {};
+  if (c.running) {
+    const row = box.querySelector('[data-key="google_calendar"] .calText');
+    if (row) row.textContent = "Waiting for you to finish signing in to Google in the browser";
+  } else if (c.error) {
+    const row = box.querySelector('[data-key="google_calendar"] .calText');
+    if (row) row.textContent = `Last sign-in did not finish: ${c.error}`;
+  }
+  for (const el of box.querySelectorAll(".cal")) {
+    const key = el.dataset.key;
+    el.querySelector(".calOn").onchange = (ev) => setCalendar(key, ev.target.checked, el);
+    el.querySelector(".calRename").onclick = () => renameCalendar(key, el.querySelector(".calName").value);
+    el.querySelector(".calTest").onclick = () => testCalendar(key, el);
+  }
+}
+
+async function loadCalendars() {
+  try {
+    const data = await api("/api/calendar");
+    renderCalendars(data);
+    return data;
+  } catch (e) {
+    $("calendars").innerHTML = `<div class="hint">Could not check calendars: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function setCalendar(key, enabled, el) {
+  const box = el.querySelector(".calOn");
+  box.disabled = true;
+  if (enabled && key !== "google_calendar") {
+    el.querySelector(".calText").textContent = "Answer the permission prompt on this Mac";
+  }
+  try {
+    const out = await api("/api/calendar", { destination: key, enabled });
+    if (out.connecting) {
+      clearInterval(calendarPoll);
+      let tries = 0;
+      calendarPoll = setInterval(async () => {
+        const data = await loadCalendars();
+        const c = (data && data.connecting) || {};
+        if (!c.running || ++tries > 200) {
+          clearInterval(calendarPoll);
+          if (!c.running && !c.error) flash("Google Calendar connected.");
+          checkup();
+        }
+      }, 2000);
+      await loadCalendars();
+      return;
+    }
+    flash(`${out.destination.label} is ${enabled ? "on" : "off"}.`);
+  } catch (e) {
+    flash(e.message, true);
+  } finally {
+    box.disabled = false;
+  }
+  await loadCalendars();
+  checkup();
+}
+
+async function renameCalendar(key, name) {
+  try {
+    const out = await api("/api/calendar", { destination: key, name });
+    flash(`${out.destination.label} will file into "${out.destination.name}".`);
+    await loadCalendars();
+  } catch (e) { flash(e.message, true); }
+}
+
+async function testCalendar(key, el) {
+  const text = el.querySelector(".calText");
+  text.textContent = "Checking...";
+  try {
+    const out = await api("/api/calendar/test", { destination: key });
+    text.textContent = out.detail;
+    el.querySelector(".dot").className = "dot " + (CAL_STATE[out.state] || "off");
+  } catch (e) {
+    text.textContent = e.message;
+    el.querySelector(".dot").className = "dot bad";
+  }
+}
+
 load().then(checkup);
 loadAccount();
 loadLogin();
+loadCalendars();
 </script>
 </body>
 </html>
