@@ -1619,6 +1619,43 @@ def t50():
 results.append(run("the panel trims panel.log as it starts", t50))
 
 
+def t51():
+    # Something other than this process rotates panel.log away (a second
+    # `intake panel` from a terminal trims on its way up, then finds the port
+    # taken). The running panel must come back to the fresh panel.log rather
+    # than fill panel.log.1 forever, and the file it makes is private.
+    import stat
+    import subprocess
+    where = tmp / "rotation-elsewhere"
+    where.mkdir()
+    log = where / "panel.log"
+    log.write_text("")
+    script = (
+        "import os, sys, time; sys.path.insert(0, sys.argv[2]); from pathlib import Path\n"
+        "from intake import logfiles\n"
+        "log = Path(sys.argv[1])\n"
+        "logfiles.keep_trimmed(log, max_bytes=10**9, every=0.05)\n"
+        "print('before', flush=True)\n"
+        "os.replace(log, log.with_name('panel.log.1'))\n"
+        "deadline = time.monotonic() + 20\n"
+        "while not log.exists() and time.monotonic() < deadline:\n"
+        "    time.sleep(0.05)\n"
+        "print('after', flush=True)\n"
+        "print('after on stderr', file=sys.stderr, flush=True)\n"
+    )
+    with log.open("a") as handle:
+        subprocess.run([sys.executable, "-c", script, str(log),
+                        str(Path(__file__).resolve().parent)],
+                       stdout=handle, stderr=handle, stdin=subprocess.DEVNULL,
+                       check=True, timeout=60)
+    old = (where / "panel.log.1").read_text()
+    assert old == "before\n", old
+    assert log.exists(), "the panel never came back to panel.log"
+    assert log.read_text() == "after\nafter on stderr\n", log.read_text()
+    assert stat.S_IMODE(log.stat().st_mode) & 0o077 == 0, oct(log.stat().st_mode)
+results.append(run("a panel.log rotated by another process is reclaimed, privately", t51))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

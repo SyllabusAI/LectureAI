@@ -82,6 +82,56 @@ def _reattach_stdio(path: Path, old_inode: int) -> None:
                 fds.append(fd)
         except OSError:
             continue
+    _point_at(path, fds)
+
+
+def _stdio_on(path: Path) -> list[int]:
+    """Which of stdout and stderr are writing `path` right now."""
+    try:
+        here = path.stat()
+    except OSError:
+        return []
+    fds = []
+    for fd in (1, 2):
+        try:
+            mine = os.fstat(fd)
+        except OSError:
+            continue
+        if (mine.st_dev, mine.st_ino) == (here.st_dev, here.st_ino):
+            fds.append(fd)
+    return fds
+
+
+def _reclaim(path: Path, fds: list[int]) -> None:
+    """Point `fds` back at `path` if the file they write is no longer it.
+
+    Only this process's own rotation used to move them. Anything else that
+    renamed or deleted panel.log (a second `intake panel` from a terminal
+    rotates on its way up, before it finds the port taken) left the running
+    panel writing into panel.log.1 for good: nothing wrote panel.log, so it
+    never grew past the limit again, and panel.log.1 grew without end until
+    a later rotation unlinked it and every line after that went nowhere.
+    """
+    stale = []
+    try:
+        here = path.stat()
+        where = (here.st_dev, here.st_ino)
+    except OSError:
+        where = None
+    for fd in fds:
+        try:
+            mine = os.fstat(fd)
+        except OSError:
+            continue
+        if (mine.st_dev, mine.st_ino) != where:
+            stale.append(fd)
+    try:
+        _point_at(path, stale)
+    except OSError:
+        pass
+
+
+def _point_at(path: Path, fds: list[int]) -> None:
     if not fds:
         return
     for stream in (sys.stdout, sys.stderr):
@@ -89,7 +139,9 @@ def _reattach_stdio(path: Path, old_inode: int) -> None:
             stream.flush()
         except Exception:
             pass
-    fresh = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    # 0600: what the panel prints (file names, errors, whatever a traceback
+    # carries) is this user's alone, even if the folder around it is opened up.
+    fresh = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         for fd in fds:
             os.dup2(fresh, fd)
@@ -109,10 +161,14 @@ def keep_trimmed(path: Path, max_bytes: int = MAX_BYTES, backups: int = BACKUPS,
         if key in _watching or every <= 0:
             return
         _watching.add(key)
+    # Decided once, while the file is certainly ours: under launchd both are
+    # panel.log, from a terminal neither is, and a terminal is never reclaimed.
+    owned = _stdio_on(path)
 
     def loop() -> None:
         stop = threading.Event()
         while not stop.wait(every):
             rotate(path, max_bytes, backups)
+            _reclaim(path, owned)
 
     threading.Thread(target=loop, name="log-rotate", daemon=True).start()
