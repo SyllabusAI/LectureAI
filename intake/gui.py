@@ -36,7 +36,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, render_template, request
 
 from intake import account, assistant, cancellations, config, doctor, insights, relay, service, setup_wizard
-from intake import signin, sync
+from intake import logfiles, signin, sync
 from intake import updates
 from intake import notion_tasks
 from intake import record as recording
@@ -1126,6 +1126,10 @@ def prepare(host: str, port: int) -> str:
     server from a thread so its window can have the main one.
     """
     url = start_url(host, port)
+    # Before the first line of this run is written, so it starts the fresh
+    # file rather than ending the old one. launchd appends this process's
+    # stdout and stderr to panel.log and nothing else ever trims it.
+    logfiles.keep_trimmed(config.HOME_DIR / "panel.log")
     print(f"{config.PROFILE.title} control panel:  {url}", file=sys.stderr, flush=True)
     needs = _setup_needs()
     if needs:

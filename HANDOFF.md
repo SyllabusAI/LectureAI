@@ -172,7 +172,11 @@ Separately, `src/panel-relay.ts` line 86 still sets a
 text message whose body is `ping`; the client sends protocol-level ping frames
 (`run_forever(ping_interval=...)`), so the two never meet and the keepalive the
 Worker's comment describes is not the one the client sends. Not yet fixed.
-`panel.log` also never rotates (3.7 MB and 54,000 lines when read).
+`panel.log` used to never rotate (3.7 MB and 54,000 lines when read); since
+the chunk-resume PR, `intake/logfiles.py` moves it to `panel.log.1` past 2 MB
+(two old copies kept), at panel start and every ten minutes, and repoints the
+launchd-redirected stdout and stderr at the fresh file. `pipeline.log` is the
+lecture history and is deliberately never rotated.
 
 **`npm test` in syllabus-accounts hangs, and CI retries it six times.**
 `@cloudflare/vitest-pool-workers` deadlocks at a rate that swings between
@@ -223,9 +227,12 @@ columns in `migrations/0005_usage.sql` (`account_id`, `audio_seconds`,
 `summary_tokens`, `source`, `updated_at`); one `DELETE` reverses it. To see
 where an account stands, query D1 (`SELECT kind, SUM(units) FROM usage WHERE
 account_id=... AND period='YYYY-MM' GROUP BY kind`), not the panel's message.
-Known and deferred: a transcription that fails mid-upload re-bills every chunk,
-because resume saves the transcript only after every chunk succeeds (one
-73-minute lecture was billed three times on 2026-09-17).
+A transcription that failed mid-upload used to re-bill every chunk, because
+resume saved the transcript only after every chunk succeeded (one 73-minute
+lecture was billed three times on 2026-09-17). Now each chunk's text is kept in
+the resume slot's `chunks/` folder as it lands, keyed by the source file's size
+and mtime, the provider, its chunk length, and the split, and a retry sends only
+the chunks that never came back.
 
 **Groq is primary, OpenAI is the fallback, and the split lives in the data.**
 `/proxy/transcribe` tries Groq `whisper-large-v3` ($0.111/hr) and falls back to
