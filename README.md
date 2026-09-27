@@ -55,6 +55,9 @@ inbox/lecture.m4a
    v
    |  notion_tasks      action items become dated tasks in your Notion to-do
    |                    list (skipped entirely unless Notion is set up)
+   |  calendars         dated action items become events or reminders in
+   |                    Apple Calendar, Apple Reminders, or Google Calendar
+   |                    (each off until you switch it on)
    v
 pipeline.log        one line per lecture: timestamp, course, source file, URL
 ```
@@ -807,6 +810,55 @@ set back in gray, the task, and a `↗` linking to the notes.
 bad token or an outage costs you the Notion tasks for that lecture and nothing
 else; the action items are still in the summary Doc.
 
+## Deadlines on your calendar
+
+Alongside Notion, or instead of it, each dated to-do can go on a calendar.
+There are three, each optional and switched on separately on the Setup page
+(or with `intake calendar --enable apple|reminders|google`), per profile:
+
+| Calendar | What each to-do becomes | Files into |
+|---|---|---|
+| Apple Calendar | an all-day event on its due date | a calendar called "Syllabus" ("Sous" for Sous), created on first use |
+| Apple Reminders | a reminder due that day | a reminders list of the same name |
+| Google Calendar | an all-day event on its due date | a calendar of the same name that Syllabus creates in your Google account |
+
+The name is yours to change on the Setup page. Each event's notes carry the
+task's detail, the course, and a link to the summary Doc. A to-do with no due
+date goes on no calendar, since there is no day to put it on; the watcher's
+log counts them. A date the summary assumed (the next class meeting) goes on
+that day, and the notes say it was assumed.
+
+```bash
+intake calendar --check              # each calendar's setting and permission
+intake calendar --connect apple      # ask macOS for calendar access
+intake calendar --test google        # would filing work right now? writes nothing
+```
+
+**Permission.** Switching Apple Calendar or Reminders on shows macOS's
+permission prompt on this Mac and saves the setting only if you allow it. If
+you said no, turn it on in System Settings > Privacy & Security > Calendars
+(or Reminders), then switch it off and on again in Setup. The doctor and the
+Setup page read the permission without asking for it. They go through
+EventKit, which Syllabus.app bundles; a command line install needs
+`pipx inject intake pyobjc-framework-EventKit` for Reminders, and without it
+Apple Calendar falls back to AppleScript and macOS asks under Automation.
+
+**Google Calendar reaches only its own calendar.** It uses the
+`calendar.app.created` permission, which reaches only calendars Syllabus made
+itself, and signs in separately from Drive (`calendar_token.json`, next to
+`token.json`), so it never touches the Drive connection. Macs signed in to a
+Syllabus account still sign in to Google Calendar on this Mac.
+
+**Nothing is filed twice.** Every to-do that reaches a calendar is recorded in
+`calendar_items.json` in the profile's home. Processing a lecture again skips
+anything already filed for it, and a to-do another lecture already filed for
+the same course and day is skipped too, compared by meaning rather than exact
+wording. An event you delete by hand stays deleted.
+
+**Failures are contained** the same way Notion's are: calendars run after
+Drive, one failing never stops the others, and anything that did not arrive is
+recorded with the lecture and shown in the panel.
+
 ## Development
 
 The code is a plain Python package in `intake/`, and the `intake`
@@ -984,6 +1036,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_upload_collisions.py   # collisions, re-runs, two-part days
 .venv/bin/python test_record.py              # device selection and naming
 .venv/bin/python test_notion_tasks.py        # property mapping and de-duplication
+.venv/bin/python test_calendar.py            # calendars next to Notion: permission, failures, filing once
 .venv/bin/python test_tasktext.py            # cleaning a task, and telling two of them apart
 .venv/bin/python test_gui.py                 # log parsing and API guard rails
 .venv/bin/python test_insights.py            # the dashboard's numbers against a fake log and week

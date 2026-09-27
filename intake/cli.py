@@ -13,6 +13,7 @@
     intake login            authorize Google Drive
     intake notion --check   what the Notion integration sees
     intake notion --setup   add the Notion properties it needs
+    intake calendar --check which calendars get deadlines, and their access
     intake --profile sous   any of the above, against the sous profile
 
 Every subcommand hands its remaining arguments to the module it wraps, so
@@ -37,7 +38,7 @@ from intake import __version__, profiles
 USAGE = __doc__.split("\n\n")[1]
 
 COMMANDS = ("setup", "doctor", "record", "watch", "panel", "app", "service", "login",
-            "notion")
+            "notion", "calendar")
 
 # Subcommands that cannot do anything useful without a schedule, so they fail
 # up front with one readable line rather than a traceback from deep inside.
@@ -172,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "notion":
         from intake import notion_tasks
         return notion_tasks.main(rest)
+    if command == "calendar":
+        from intake import calendars
+        return calendars.main(rest)
     return 2  # unreachable
 
 

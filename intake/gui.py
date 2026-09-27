@@ -36,6 +36,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, render_template, request
 
 from intake import account, assistant, cancellations, config, consent, doctor, insights, relay, service, setup_wizard
+from intake import calendars
 from intake import logfiles, signin, sync
 from intake import updates
 from intake import notion_tasks
@@ -981,6 +982,100 @@ def drive_disconnect():
     except OSError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
     return jsonify({"ok": True})
+
+
+# --- Calendars ------------------------------------------------------------------
+#
+# Their own routes rather than fields on /api/setup: switching a calendar on
+# asks macOS or Google for permission there and then, which a form that saves
+# everything at once cannot wait on, and none of it needs a schedule.
+
+# Google Calendar's sign-in runs in the browser, like Drive's, so the page
+# polls for it. Only one at a time.
+_calendar_connect = {"running": False, "error": ""}
+
+
+def _calendar_key(payload: dict) -> str:
+    key = _text(payload, "destination")
+    if key not in calendars.KEYS:
+        raise _BadRequest(f"destination must be one of {', '.join(calendars.KEYS)}")
+    return key
+
+
+def _run_google_connect(updates: dict[str, str]) -> None:
+    try:
+        state, detail = calendars.connect(calendars.GOOGLE)
+        if state == "granted":
+            calendars.write_settings({**updates, calendars.SETTING[calendars.GOOGLE]: "on"})
+            _calendar_connect["error"] = ""
+        else:
+            _calendar_connect["error"] = detail
+    except Exception as exc:  # reported to the page, never raised into Flask
+        _calendar_connect["error"] = str(exc)
+    finally:
+        _calendar_connect["running"] = False
+
+
+@app.get("/api/calendar")
+def calendar_state():
+    """Each calendar's setting and access. Local only: never prompts."""
+    return jsonify({"destinations": calendars.describe_all(),
+                    "connecting": dict(_calendar_connect)})
+
+
+@app.post("/api/calendar")
+def calendar_save():
+    """Switch one calendar on or off, or rename where it files.
+
+    Switching Apple Calendar or Reminders on shows macOS's permission prompt
+    on this Mac and waits for the answer; it is saved as on only when allowed.
+    Google Calendar opens its sign-in in the browser and is saved as on when
+    that finishes, which the page polls for.
+    """
+    payload = _body()
+    key = _calendar_key(payload)
+    wants = payload.get("enabled")
+    if wants is not None and not isinstance(wants, bool):
+        raise _BadRequest("enabled must be true or false")
+    updates: dict[str, str] = {}
+    if "name" in payload:
+        try:
+            updates[calendars.NAME_SETTING[key]] = calendars.clean_name(_text(payload, "name"))
+        except ValueError as exc:
+            raise _BadRequest(str(exc))
+
+    if wants is True and calendars.describe(key)["state"] != "granted":
+        if key == calendars.GOOGLE:
+            if _calendar_connect["running"]:
+                return jsonify({"ok": False, "error": "a Google sign-in is already "
+                                "in progress"}), 409
+            _calendar_connect.update(running=True, error="")
+            threading.Thread(target=_run_google_connect, args=(updates,),
+                             daemon=True).start()
+            return jsonify({"ok": True, "connecting": True})
+        state, detail = calendars.connect(key)
+        if state != "granted":
+            return jsonify({"ok": False, "error": detail, "state": state}), 400
+    if wants is not None:
+        updates[calendars.SETTING[key]] = "on" if wants else ""
+    if updates:
+        try:
+            calendars.write_settings(updates)
+        except setup_wizard.UnsafeSetting as exc:
+            raise _BadRequest(str(exc))
+    return jsonify({"ok": True, "destination": calendars.describe(key)})
+
+
+@app.post("/api/calendar/test")
+def calendar_test():
+    """Whether filing to this calendar would work right now. Writes nothing."""
+    key = _calendar_key(_body())
+    try:
+        state, detail = calendars.test(key)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"{calendars.LABELS[key]}: {exc}"}), 502
+    return jsonify({"ok": True, "state": state, "detail": detail,
+                    "works": state == "granted"})
 
 
 # --- The Syllabus account this Mac belongs to --------------------------------

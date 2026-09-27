@@ -134,6 +134,11 @@
   .check-name { font-weight: 500; min-width: 140px; }
   .check-detail { color: var(--muted); font-weight: 300; word-break: break-word; }
   .check-fix { color: var(--warn); font-weight: 400; margin-top: 2px; }
+  .cal { padding: 14px 0; border-top: 1px solid var(--line); }
+  .cal:first-child { border-top: none; padding-top: 4px; }
+  .cal .hint { margin-top: 4px; }
+  .cal .row { margin-top: 10px; }
+  .cal input[type=text] { max-width: 260px; }
   .check-fix code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--brand-soft); color: var(--brand-deep); padding: 1px 6px; border-radius: 5px; }
 
   .save-bar { display: flex; align-items: center; gap: 14px; margin: 6px 0 24px; flex-wrap: wrap; }
@@ -290,6 +295,18 @@
       </div>
     </div>
     <div class="hint" id="driveHint"></div>
+  </div>
+
+  <!-- Calendars -->
+  <div class="card" id="calendarCard">
+    <h2>Calendars <span style="font-weight:400;letter-spacing:0;text-transform:none">(optional)</span></h2>
+    <p class="lead">
+      Put every dated to-do on a calendar too. Each one is optional and works alongside
+      Notion. To-dos with no due date stay off your calendars, since there is no day to put
+      them on. Switching one on asks for permission right away, and the prompt appears on
+      this Mac.
+    </p>
+    <div id="calendars"><div class="hint">Checking&hellip;</div></div>
   </div>
 
   <!-- Syllabus account -->
@@ -791,9 +808,120 @@ $("loginOn").onchange = async () => {
   finally { $("loginOn").disabled = false; }
 };
 
+// --- Calendars ------------------------------------------------------------------
+const CAL_TEXT = {
+  apple_calendar: "Each deadline becomes an all-day event in a calendar of its own.",
+  apple_reminders: "Each deadline becomes a reminder, due that day, in a list of its own.",
+  google_calendar: "Each deadline becomes an all-day event in a calendar {{ profile.title }} creates in your Google account. It can see only calendars it created.",
+};
+const CAL_STATE = {
+  granted: "on", unknown: "off", not_determined: "off",
+  denied: "bad", restricted: "bad", write_only: "bad", unavailable: "bad", error: "bad",
+};
+let calendarPoll = null;
+
+function renderCalendars(data) {
+  const box = $("calendars");
+  box.innerHTML = data.destinations.map(d => `
+    <div class="cal" data-key="${escapeHtml(d.key)}">
+      <label class="toggle"><input type="checkbox" class="calOn" ${d.enabled ? "checked" : ""}> ${escapeHtml(d.label)}</label>
+      <div class="hint">${escapeHtml(CAL_TEXT[d.key] || "")}</div>
+      <div class="status-line" style="margin-top:8px">
+        <span class="dot ${CAL_STATE[d.state] || "off"}"></span>
+        <span class="calText">${escapeHtml(d.detail)}</span>
+      </div>
+      <div class="row">
+        <input type="text" class="calName" aria-label="${escapeHtml(d.label)} name" value="${escapeHtml(d.name)}" spellcheck="false">
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn small calRename">Save name</button>
+          <button type="button" class="btn small calTest">Test</button>
+        </div>
+      </div>
+    </div>`).join("");
+  const c = data.connecting || {};
+  if (c.running) {
+    const row = box.querySelector('[data-key="google_calendar"] .calText');
+    if (row) row.textContent = "Waiting for you to finish signing in to Google in the browser";
+  } else if (c.error) {
+    const row = box.querySelector('[data-key="google_calendar"] .calText');
+    if (row) row.textContent = `Last sign-in did not finish: ${c.error}`;
+  }
+  for (const el of box.querySelectorAll(".cal")) {
+    const key = el.dataset.key;
+    el.querySelector(".calOn").onchange = (ev) => setCalendar(key, ev.target.checked, el);
+    el.querySelector(".calRename").onclick = () => renameCalendar(key, el.querySelector(".calName").value);
+    el.querySelector(".calTest").onclick = () => testCalendar(key, el);
+  }
+}
+
+async function loadCalendars() {
+  try {
+    const data = await api("/api/calendar");
+    renderCalendars(data);
+    return data;
+  } catch (e) {
+    $("calendars").innerHTML = `<div class="hint">Could not check calendars: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function setCalendar(key, enabled, el) {
+  const box = el.querySelector(".calOn");
+  box.disabled = true;
+  if (enabled && key !== "google_calendar") {
+    el.querySelector(".calText").textContent = "Answer the permission prompt on this Mac";
+  }
+  try {
+    const out = await api("/api/calendar", { destination: key, enabled });
+    if (out.connecting) {
+      clearInterval(calendarPoll);
+      let tries = 0;
+      calendarPoll = setInterval(async () => {
+        const data = await loadCalendars();
+        const c = (data && data.connecting) || {};
+        if (!c.running || ++tries > 200) {
+          clearInterval(calendarPoll);
+          if (!c.running && !c.error) flash("Google Calendar connected.");
+          checkup();
+        }
+      }, 2000);
+      await loadCalendars();
+      return;
+    }
+    flash(`${out.destination.label} is ${enabled ? "on" : "off"}.`);
+  } catch (e) {
+    flash(e.message, true);
+  } finally {
+    box.disabled = false;
+  }
+  await loadCalendars();
+  checkup();
+}
+
+async function renameCalendar(key, name) {
+  try {
+    const out = await api("/api/calendar", { destination: key, name });
+    flash(`${out.destination.label} will file into "${out.destination.name}".`);
+    await loadCalendars();
+  } catch (e) { flash(e.message, true); }
+}
+
+async function testCalendar(key, el) {
+  const text = el.querySelector(".calText");
+  text.textContent = "Checking...";
+  try {
+    const out = await api("/api/calendar/test", { destination: key });
+    text.textContent = out.detail;
+    el.querySelector(".dot").className = "dot " + (CAL_STATE[out.state] || "off");
+  } catch (e) {
+    text.textContent = e.message;
+    el.querySelector(".dot").className = "dot bad";
+  }
+}
+
 load().then(checkup);
 loadAccount();
 loadLogin();
+loadCalendars();
 </script>
 </body>
 </html>

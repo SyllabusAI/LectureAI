@@ -837,14 +837,18 @@ const STAGES = [
   ["transcribing", "Transcribe"],
   ["summarizing",  "Summarize"],
   ["uploading",    "Drive"],
-  ["notion",       "Notion"],
+  ["notion",       "To-dos"],
 ];
+// Calendars are filed in the same step as Notion: both are where the
+// lecture's to-dos go once the notes are safe in Drive.
+const STAGE_STEP = { calendar: "notion" };
 const STAGE_TEXT = {
   waiting:      "Waiting for the file to finish copying",
   transcribing: "Transcribing",
   summarizing:  "Summarizing",
   uploading:    "Uploading to Drive",
   notion:       "Adding tasks to Notion",
+  calendar:     "Adding deadlines to your calendars",
 };
 
 function hhmmss(total) {
@@ -1387,7 +1391,7 @@ function renderPipeline(s) {
   wb.disabled = busy;
 
   const p = s.processing;
-  const at = p ? STAGES.findIndex(([k]) => k === p.stage) : -1;
+  const at = p ? STAGES.findIndex(([k]) => k === (STAGE_STEP[p.stage] || p.stage)) : -1;
   $("steps").className = "steps" + (p ? "" : " idle");
   $("steps").innerHTML = STAGES.map(([key, label], i) => {
     const cls = p && i < at ? " done" : p && i === at ? " active" : "";

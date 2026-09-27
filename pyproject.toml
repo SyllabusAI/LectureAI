@@ -25,7 +25,13 @@ dependencies = [
 # The desktop app (intake/app.py) and the tooling that freezes it into
 # Syllabus.app (packaging/). Neither is needed for the command line install.
 [project.optional-dependencies]
-app = ["pywebview>=6.0"]
+app = ["pywebview>=6.0", "pyobjc-framework-EventKit>=10.0; sys_platform == 'darwin'"]
+# Apple Calendar and Apple Reminders through EventKit, for a command line
+# install: pipx install 'intake[calendar] @ git+...'. Without it Apple Calendar
+# falls back to AppleScript and Reminders is unavailable. Google Calendar
+# needs nothing extra. 10.0 is the first release with macOS 14's full-access
+# requests.
+calendar = ["pyobjc-framework-EventKit>=10.0; sys_platform == 'darwin'"]
 build = ["pyinstaller>=6.10"]
 
 [project.scripts]
