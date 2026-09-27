@@ -139,14 +139,23 @@ def _point_at(path: Path, fds: list[int]) -> None:
             stream.flush()
         except Exception:
             pass
-    # 0600: what the panel prints (file names, errors, whatever a traceback
-    # carries) is this user's alone, even if the folder around it is opened up.
-    fresh = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    # Open under a private name and dup2 onto it first, then rename it to
+    # `path` last. `open(path, O_CREAT)` would make `path` exist the instant
+    # the call is made, before the dup2s that follow it run - os.open and
+    # os.dup2 both release the GIL for their syscall, so anyone polling
+    # `path.exists()` (a second `intake panel` starting up, this test) could
+    # see it exist while stdout is still mid-flight to the old file and
+    # stderr hasn't been touched yet, and read a file missing "after"/"after
+    # on stderr". Renaming last means `path` never exists until both fds are
+    # already live on it.
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fresh = os.open(tmp_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         for fd in fds:
             os.dup2(fresh, fd)
     finally:
         os.close(fresh)
+    os.replace(tmp_path, path)
 
 
 def keep_trimmed(path: Path, max_bytes: int = MAX_BYTES, backups: int = BACKUPS,
