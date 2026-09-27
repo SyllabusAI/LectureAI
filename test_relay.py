@@ -711,6 +711,31 @@ def t21():
 results.append(run("the service's `pong` is ignored quietly", t21))
 
 
+def t22():
+    # A socket that cannot carry the heartbeat is one the service will drop
+    # after 90 seconds anyway. It used to stay up, "connected", until the
+    # protocol ping timed out; now the failed beat closes it and the loop
+    # reconnects. Nothing here calls sock.close().
+    account.save(ME)
+    sock = HeldSocket(fail_sends=True)
+    r = relay.Relay(echo, socket_factory=sock.factory, sleep=lambda s: None,
+                    heartbeat_seconds=BEAT)
+    runner = threading.Thread(target=r._connect_once, args=(ME,), daemon=True)
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            runner.start()
+            assert sock.opened.wait(5)
+            runner.join(5)
+        assert not runner.is_alive(), "a heartbeat that failed left its connection open"
+        assert sock.closed.is_set(), "the failed heartbeat did not close the socket"
+        assert time.monotonic() - sock.open_time < 5, "it closed on the deadline, not the failure"
+        assert heartbeat_threads() == []
+    finally:
+        sock.close()
+        account.forget()
+results.append(run("a heartbeat that cannot be sent ends the connection, so the loop reconnects", t22))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -445,9 +445,16 @@ class Relay:
     def _beat(self, sock, done: threading.Event) -> None:
         """Send the text heartbeat on this connection until it ends.
 
-        Holds _send_lock so a beat never lands between the frames of a
-        chunked answer. A failed send means the socket is going; the beat
-        says so once and stops, and run_forever notices on its own.
+        Holds _send_lock like every other send, so a beat is always a whole
+        message of its own. It can land between two chunks of an answer,
+        which is fine: chunks carry their id, and the service reads a bare
+        `ping` as the heartbeat, never as part of a frame.
+
+        A failed send ends the connection. The service stops trusting a
+        socket that goes 90 seconds without a beat, so one that cannot send
+        them is only waiting to be dropped; closing it now lets the loop reconnect
+        instead of waiting on the protocol ping to time out. It says so
+        once, not every tick.
         """
         while not done.wait(self._heartbeat_seconds):
             if self._stop.is_set() or self._socket is not sock:
@@ -457,6 +464,10 @@ class Relay:
                     sock.send(HEARTBEAT)
             except Exception as exc:
                 _say(f"heartbeat stopped: could not send: {type(exc).__name__}: {exc}")
+                try:
+                    sock.close()
+                except Exception:
+                    pass
                 return
 
     # -- frames --
