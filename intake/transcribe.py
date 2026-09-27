@@ -155,7 +155,7 @@ class ChunkCheckpoint:
             chunks: list[Path]) -> str:
         stat = src.stat()
         ident = {
-            "v": 1,
+            "v": 2,
             "size": stat.st_size,
             "mtime_ns": stat.st_mtime_ns,
             "provider": provider.name,
@@ -184,19 +184,38 @@ class ChunkCheckpoint:
         return self.dir / f"part_{index:03d}.txt"
 
     def get(self, index: int) -> str | None:
+        """The text an earlier attempt kept for this chunk, or None.
+
+        Only a record that reads back whole counts. A part file that is empty
+        or cut short (the Mac lost power after the rename but before the data
+        reached the disk) is not a chunk that came back empty, and trusting
+        it would file a lecture with a silent gap where that chunk's words
+        belong. Such a file is sent again instead.
+        """
         try:
-            return self._part(index).read_text()
-        except OSError:
+            record = json.loads(self._part(index).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             return None
+        if (not isinstance(record, dict) or record.get("chunk") != index
+                or not isinstance(record.get("text"), str)):
+            return None
+        return record["text"]
 
     def put(self, index: int, text: str) -> None:
         """Keep one chunk's text. Never raises: failing to save a result
         must not fail the transcription that just paid for it."""
         part = self._part(index)
         temp = part.with_name(f"{part.name}.{os.getpid()}.tmp")
+        record = json.dumps({"chunk": index, "text": text})
         try:
             self.dir.mkdir(parents=True, exist_ok=True)
-            temp.write_text(text)
+            # Flushed to the disk before the rename, so the name never points
+            # at data that is still only in memory. get() refuses anything
+            # that does not parse, for the case where it happened anyway.
+            with open(temp, "w", encoding="utf-8") as handle:
+                handle.write(record)
+                handle.flush()
+                os.fsync(handle.fileno())
             temp.replace(part)
         except OSError:
             temp.unlink(missing_ok=True)

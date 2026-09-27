@@ -796,6 +796,37 @@ def t27():
 results.append(run("no checkpoint, or no split, transcribes as it always did", t27))
 
 
+def t28():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    checkpoint = config.WORK_DIR / "chunk-test"
+    import shutil
+    shutil.rmtree(checkpoint, ignore_errors=True)
+    with ChunkedAudio(seconds=3000.0):
+        try:
+            transcribe.transcribe(audio, provider=ChunkProvider(fail_on=4),
+                                  checkpoint=checkpoint)
+        except RuntimeError:
+            pass
+        (slot,) = [p for p in checkpoint.iterdir() if p.is_dir()]
+        # The Mac lost power after a rename reached the disk but the data did
+        # not: part 1 is empty, part 2 is cut off partway through its record,
+        # and part 3 is some other chunk's record under this chunk's name.
+        # None of them is a chunk that came back empty, and trusting any of
+        # them files the lecture with a silent gap.
+        (slot / "part_001.txt").write_text("")
+        whole = (slot / "part_002.txt").read_text()
+        (slot / "part_002.txt").write_text(whole[: len(whole) // 2])
+        (slot / "part_003.txt").write_text(json.dumps({"chunk": 7, "text": "elsewhere"}))
+        retry = ChunkProvider()
+        text = transcribe.transcribe(audio, provider=retry, checkpoint=checkpoint)
+    assert retry.sent == [1, 2, 3, 4, 5], f"a damaged part was trusted: {retry.sent}"
+    expected = "\n\n".join(f"words of part {n}" for n in range(1, 6))
+    assert text == expected, text
+    shutil.rmtree(checkpoint, ignore_errors=True)
+results.append(run("a part file cut short by a crash is sent again, not trusted", t28))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
