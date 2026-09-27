@@ -167,30 +167,33 @@ use, which was about six failed reconnect attempts that logged nothing,
 because the client only printed on `on_open`. PR #67 added logging for failed
 reconnects and cut the status-poll noise (93% of the log); the cause of that
 gap is still unattributed, deliberately, until a day of real use is read back.
-Separately, `src/panel-relay.ts` line 86 still sets a
-`WebSocketRequestResponsePair("ping", "pong")` auto-response, which matches a
-text message whose body is `ping`; the client sends protocol-level ping frames
-(`run_forever(ping_interval=...)`), so the two never meet and the keepalive the
-Worker's comment describes is not the one the client sends. Not yet fixed.
+The keepalive mismatch the audit also found (the Worker's text `ping`/`pong`
+auto-response never met the client's protocol ping frames) is resolved once
+syllabus-accounts #37 (still open on 2026-09-26) ships alongside LectureAI's
+text heartbeat: the panel
+also sends the text message `ping` every 30 seconds (`HEARTBEAT` in
+`intake/relay.py`; a Mac gets it only with a release built after it), and
+with #37 the service closes a socket that has sent one and then goes 90
+seconds without (`PANEL_SILENCE_MS`). A beat the panel cannot send closes
+the socket from this end too, so the loop reconnects. Protocol pings stay, so the
+panel still notices a dead link from its side. Keep the two paces in step.
 `panel.log` used to never rotate (3.7 MB and 54,000 lines when read); since
 the chunk-resume PR, `intake/logfiles.py` moves it to `panel.log.1` past 2 MB
 (two old copies kept), at panel start and every ten minutes, and repoints the
 launchd-redirected stdout and stderr at the fresh file. `pipeline.log` is the
 lecture history and is deliberately never rotated.
 
-**`npm test` in syllabus-accounts hangs, and CI retries it six times.**
-`@cloudflare/vitest-pool-workers` deadlocks at a rate that swings between
-1-in-6 and 4-in-5 locally and is worse on GitHub runners; it hangs either at
-startup with only the `RUN v4.x` banner, or after every test has passed. It is
-content-independent (a duplicate of a passing file reproduces it), so read the
-per-file counts before blaming a branch. `ci.yml` runs up to six attempts of
-`timeout --signal=KILL 150` inside a 20-minute job and retries only on exit
-137/124, so a real failure can never be retried into a pass. Locally, run
-vitest in the background and kill it after ~120 seconds; macOS has no
-`timeout`. Two other flakes in the same suite: `devices.test.ts` "limits
-polling too" can exceed the 5,000 ms default on CI (needs an explicit
-timeout), and `proxy.test.ts` "rate limits an account that floods it" straddles
-a fixed 60-second window on a slow runner (needs a stubbed clock).
+**`npm test` in syllabus-accounts used to hang; CI still retries it.** The
+vitest-pool-workers deadlock stopped after the relay test-teardown fix of
+2026-09-18: per syllabus-accounts #37 (not yet merged), 27 consecutive CI runs passed on the
+first attempt and the full suite ran 10/10 clean locally. `ci.yml` keeps its
+retry loop (up to six attempts of `timeout --signal=KILL 150`, retried only on
+exit 137/124, so a real failure is never retried into a pass). If it hangs
+again, suspect a test socket nothing waits on. Locally, run vitest in the
+background and kill it after about 120 seconds; macOS has no `timeout`. The
+two rate-limit flakes (`devices.test.ts` "limits polling too" and the proxy
+flood tests) straddle a fixed 60-second window; #37 freezes the clock for
+them once it merges.
 
 **Two Google OAuth clients, and why `drive.file` grants are per project.**
 The bundled Desktop client (`intake/credentials.json`, committed on purpose;
