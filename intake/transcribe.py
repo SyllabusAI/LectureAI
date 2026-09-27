@@ -15,6 +15,9 @@ Progress goes to stderr, the transcript goes to stdout, so this works:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
 import shutil
 import subprocess
 import sys
@@ -125,10 +128,147 @@ def split(src: Path, work_dir: Path, seconds: int) -> list[Path]:
     return chunks
 
 
+class ChunkCheckpoint:
+    """Each chunk's transcript, on disk the moment the provider returns it.
+
+    A lecture long enough to split goes up as several requests, each billed as
+    it lands. Resume used to keep the transcript only once every chunk had
+    succeeded, so a failure on the last chunk threw away the ones before it
+    and the retry paid for all of them again: one 73 minute lecture was billed
+    three times. Now a retry sends only the chunks that never came back.
+
+    The same holds inside a chunk. One whose transcript looks truncated is cut
+    in half and each half sent on its own (see _transcribe_chunk), and those
+    are requests billed as they land too. Each result is filed under its
+    part: "3" for chunk 3, "3.0" and "3.1" for its halves, "3.1.0" for the
+    first half of the second half. A part that was found truncated is filed
+    as split, so a retry goes straight to its halves rather than paying for
+    the whole chunk again only to learn what it already knew.
+
+    Results are filed under a key made from everything that decides what a
+    chunk holds: the source file's size and modification time, the provider,
+    its chunk length, whether the audio was compressed first, and the number
+    and sizes of the chunks the split produced. A different recording, a
+    different provider, or a split that cut the audio differently gets a
+    different key, and never stitches in text from somebody else's chunk.
+    Anything filed under another key is stale and is dropped on sight. The
+    halves are cut on this Mac at retry time, so each record also carries the
+    size of the audio it came from, and a half that was cut differently this
+    time is sent again rather than trusted.
+    """
+
+    def __init__(self, root: Path, key: str):
+        self.root = root
+        self.dir = root / key
+
+    @staticmethod
+    def key(src: Path, provider: TranscriptionProvider, compressed: bool,
+            chunks: list[Path], whole: bool = False) -> str:
+        stat = src.stat()
+        ident = {
+            # 3: records are filed by part ("3", "3.0", "3.1") and carry the
+            # size of the audio they came from, and a part can be filed as
+            # split. A version 2 record is none of that.
+            "v": 3,
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "provider": provider.name,
+            "chunk_seconds": provider.max_chunk_seconds,
+            "compressed": compressed,
+            "whole": whole,
+            "chunks": [_size(c) for c in chunks],
+        }
+        raw = json.dumps(ident, sort_keys=True).encode()
+        return hashlib.sha256(raw).hexdigest()[:24]
+
+    def open(self, create: bool = True) -> None:
+        """Drop any other key's folder, and make this key's unless told not to.
+
+        A recording that goes up whole passes create=False: it only ever
+        files anything if its one request comes back truncated, and put()
+        makes the folder on the first thing it files."""
+        try:
+            if self.root.is_dir():
+                for other in self.root.iterdir():
+                    if other != self.dir:
+                        if other.is_dir():
+                            shutil.rmtree(other, ignore_errors=True)
+                        else:
+                            other.unlink(missing_ok=True)
+            if create:
+                self.dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+
+    def _part(self, part: str) -> Path:
+        head, _, rest = part.partition(".")
+        return self.dir / (f"part_{int(head):03d}" + (f".{rest}" if rest else "") + ".txt")
+
+    def _record(self, part: str, audio: Path) -> dict | None:
+        """The record filed for this part of this audio, or None.
+
+        Only a record that reads back whole counts. A part file that is empty
+        or cut short (the Mac lost power after the rename but before the data
+        reached the disk) is not a chunk that came back empty, and trusting
+        it would file a lecture with a silent gap where that chunk's words
+        belong. Nor is a record naming another part, or one cut from audio of
+        a different size. Any of those is sent again instead.
+        """
+        try:
+            record = json.loads(self._part(part).read_text(encoding="utf-8"))
+            size = _size(audio)
+        except (OSError, ValueError):
+            return None
+        if (not isinstance(record, dict) or record.get("part") != part
+                or record.get("bytes") != size):
+            return None
+        return record
+
+    def get(self, part: str, audio: Path) -> str | None:
+        """The text an earlier attempt kept for this part, or None."""
+        record = self._record(part, audio)
+        if record is None or not isinstance(record.get("text"), str):
+            return None
+        return record["text"]
+
+    def was_split(self, part: str, audio: Path) -> bool:
+        """Whether an earlier attempt found this part truncated and split it."""
+        record = self._record(part, audio)
+        return record is not None and record.get("split") is True
+
+    def put(self, part: str, audio: Path, text: str) -> None:
+        """Keep one part's text."""
+        self._write(part, {"part": part, "bytes": _size(audio), "text": text})
+
+    def put_split(self, part: str, audio: Path) -> None:
+        """Keep that this part came back truncated and is being halved. Its
+        text, once the halves are back, replaces this."""
+        self._write(part, {"part": part, "bytes": _size(audio), "split": True})
+
+    def _write(self, part: str, record: dict) -> None:
+        """Never raises: failing to save a result must not fail the
+        transcription that just paid for it."""
+        path = self._part(part)
+        temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            # Flushed to the disk before the rename, so the name never points
+            # at data that is still only in memory. _record() refuses anything
+            # that does not parse, for the case where it happened anyway.
+            with open(temp, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(record))
+                handle.flush()
+                os.fsync(handle.fileno())
+            temp.replace(path)
+        except OSError:
+            temp.unlink(missing_ok=True)
+
+
 def transcribe(
     path: str | Path,
     on_progress=None,
     provider: TranscriptionProvider | None = None,
+    checkpoint: Path | None = None,
 ) -> str:
     """Transcribe an audio file, compressing and splitting as needed.
 
@@ -142,6 +282,11 @@ def transcribe(
     work moves along. A 75 minute lecture takes many minutes and, on the
     default provider, ten API calls, so something has to be able to say how
     far in it is.
+
+    checkpoint, if given, is a folder where each chunk's transcript is kept
+    as soon as it succeeds, so that a retry after a failure part way through
+    pays only for the chunks that never came back (see ChunkCheckpoint). The
+    caller removes it once the whole transcript is safely stored.
     """
     def progress(detail: str) -> None:
         if on_progress:
@@ -164,7 +309,8 @@ def transcribe(
     work_dir = Path(tempfile.mkdtemp(prefix=f"{src.stem}_", dir=config.WORK_DIR))
     try:
         audio = src
-        if _size(audio) > provider.compress_threshold_bytes:
+        compressed = _size(audio) > provider.compress_threshold_bytes
+        if compressed:
             progress("compressing the audio")
             audio = compress(audio, work_dir)
 
@@ -179,7 +325,17 @@ def transcribe(
             # go up whole was the one case that skipped it: a fast talker in a
             # 40 minute class can pass the output cap without going anywhere
             # near the duration limit that triggers a split.
-            text = _transcribe_chunk(audio, provider, work_dir)
+            #
+            # The checkpoint is only written to if that happens: the one
+            # request that came back whole is returned straight to the caller,
+            # but halves of a truncated one are billed one by one like chunks.
+            saved = None
+            if checkpoint is not None:
+                saved = ChunkCheckpoint(
+                    Path(checkpoint),
+                    ChunkCheckpoint.key(src, provider, compressed, [audio], whole=True))
+                saved.open(create=False)
+            text = _transcribe_chunk(audio, provider, work_dir, saved, "1")
             log(f"  done: {len(text.split())} words")
             return text
 
@@ -188,10 +344,24 @@ def transcribe(
         parts: list[str] = []
         progress("splitting the audio")
         chunks = split(audio, work_dir, provider.max_chunk_seconds)
+        saved = None
+        if checkpoint is not None:
+            saved = ChunkCheckpoint(
+                Path(checkpoint),
+                ChunkCheckpoint.key(src, provider, compressed, chunks))
+            saved.open()
         for i, chunk in enumerate(chunks, start=1):
+            earlier = saved.get(str(i), chunk) if saved else None
+            if earlier is not None:
+                log(f"  chunk {i}/{len(chunks)}: reusing what an earlier attempt paid for")
+                parts.append(earlier)
+                continue
             log(f"  chunk {i}/{len(chunks)} ...")
             progress(f"part {i} of {len(chunks)}")
-            parts.append(_transcribe_chunk(chunk, provider, work_dir))
+            text = _transcribe_chunk(chunk, provider, work_dir, saved, str(i))
+            if saved:
+                saved.put(str(i), chunk, text)
+            parts.append(text)
 
         text = "\n\n".join(p for p in parts if p)
         log(f"  done: {len(text.split())} words from {len(chunks)} chunks")
@@ -201,7 +371,8 @@ def transcribe(
 
 
 def _transcribe_chunk(
-    chunk: Path, provider: TranscriptionProvider, work_dir: Path, depth: int = 0
+    chunk: Path, provider: TranscriptionProvider, work_dir: Path,
+    saved: ChunkCheckpoint | None = None, part: str = "1", depth: int = 0,
 ) -> str:
     """Transcribe one chunk, halving it if the output looks truncated.
 
@@ -210,28 +381,58 @@ def _transcribe_chunk(
     lecture, split that chunk and try again. A provider whose
     truncation_word_threshold is None cannot truncate, and skips all of this.
 
+    Every request in here is billed as it lands, so with a checkpoint each
+    half's text is kept under its own part the moment it comes back, and a
+    chunk found truncated is kept as split before its halves go up (see
+    ChunkCheckpoint). A retry after half B fails sends half B and nothing
+    else. `part` names this chunk there; the caller keeps the text of the
+    top-level one, which is the same text as its halves stitched together.
+
     Deliberately sends no `prompt`: passing the previous chunk's tail for
     continuity makes these models re-transcribe that text at the start of the
     next chunk. Measured on a 39 min lecture, it duplicated two of five seams
     and inflated the transcript by 13%.
     """
-    text = provider.transcribe_file(chunk)
+    if depth and saved:
+        earlier = saved.get(part, chunk)
+        if earlier is not None:
+            log(f"    part {part}: reusing what an earlier attempt paid for")
+            return earlier
 
-    threshold = provider.truncation_word_threshold
-    if threshold is None or len(text.split()) < threshold:
-        return text
+    seconds = None
+    if saved and saved.was_split(part, chunk):
+        seconds = duration_seconds(chunk)
+    if seconds:
+        log(f"    part {part} came back truncated before; going straight to its halves")
+    else:
+        text = provider.transcribe_file(chunk)
 
-    seconds = duration_seconds(chunk)
-    if depth >= 2 or not seconds or seconds < 120:
-        log(f"    WARNING: {len(text.split())} words from {chunk.name} may be "
-            f"truncated; lower {provider.name}'s max_chunk_seconds in providers.py")
-        return text
+        threshold = provider.truncation_word_threshold
+        if threshold is None or len(text.split()) < threshold:
+            if depth and saved:
+                saved.put(part, chunk, text)
+            return text
 
-    log(f"    {len(text.split())} words looks truncated, re-splitting "
-        f"{seconds / 60:.0f} min chunk in half")
+        seconds = duration_seconds(chunk)
+        if depth >= 2 or not seconds or seconds < 120:
+            log(f"    WARNING: {len(text.split())} words from {chunk.name} may be "
+                f"truncated; lower {provider.name}'s max_chunk_seconds in providers.py")
+            if depth and saved:
+                saved.put(part, chunk, text)
+            return text
+
+        log(f"    {len(text.split())} words looks truncated, re-splitting "
+            f"{seconds / 60:.0f} min chunk in half")
+        if saved:
+            saved.put_split(part, chunk)
+
     halves = split(chunk, work_dir, seconds=int(seconds // 2) + 1)
-    out = [_transcribe_chunk(h, provider, work_dir, depth + 1) for h in halves]
-    return "\n\n".join(t for t in out if t)
+    out = [_transcribe_chunk(h, provider, work_dir, saved, f"{part}.{n}", depth + 1)
+           for n, h in enumerate(halves)]
+    text = "\n\n".join(t for t in out if t)
+    if depth and saved:
+        saved.put(part, chunk, text)
+    return text
 
 
 def main(argv: list[str] | None = None) -> int:
