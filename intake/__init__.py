@@ -3,4 +3,4 @@
 Two profiles share the pipeline: Syllabus (lectures) and Sous (client calls).
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
