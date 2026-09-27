@@ -1344,6 +1344,14 @@ def t43():
         started.append(destination)
         return ["sleep", "20"]
 
+    def _our_sleeps():
+        # Only this process's children. A pgrep across the whole machine
+        # counted, and then SIGKILLed, any `sleep 20` anyone else was running,
+        # which on a machine running two suites at once is a failure here and
+        # a killed process somewhere else.
+        return subprocess.run(["pgrep", "-P", str(os.getpid()), "-f", "^sleep 20"],
+                              capture_output=True, text=True).stdout.split()
+
     rec_mod._ffmpeg_command = stub
     gui._recorder = None
     config.RECORDING_STATE_FILE.unlink(missing_ok=True)
@@ -1362,12 +1370,10 @@ def t43():
             t.join()
         assert sorted(codes) == [200, 409], f"both starts were accepted: {codes}"
         assert len(started) == 1, f"{len(started)} capture processes were opened"
-        live = subprocess.run(["pgrep", "-f", "^sleep 20"],
-                              capture_output=True, text=True).stdout.split()
+        live = _our_sleeps()
         assert len(live) <= 1, f"{len(live)} captures left running: {live}"
     finally:
-        for pid in subprocess.run(["pgrep", "-f", "^sleep 20"], capture_output=True,
-                                  text=True).stdout.split():
+        for pid in _our_sleeps():
             try:
                 os.kill(int(pid), signal.SIGKILL)
             except (OSError, ValueError):
