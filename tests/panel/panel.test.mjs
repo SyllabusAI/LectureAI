@@ -40,6 +40,7 @@ function setupRoutes(extra = {}) {
     "/api/doctor": like("/api/doctor"),
     "/api/account": like("/api/account"),
     "/api/login-item": like("/api/login-item"),
+    "/api/calendar": like("/api/calendar"),
     ...extra,
   };
 }
@@ -330,6 +331,92 @@ await run("a fix the form cannot carry out is not rewritten into one it can", as
   await page.close();
 });
 
+// --- Calendars --------------------------------------------------------------
+
+/** The calendar payload with one destination's fields replaced. */
+function calendarsWith(key, changes) {
+  const out = like("/api/calendar");
+  out.destinations = out.destinations.map((d) => (d.key === key ? { ...d, ...changes } : d));
+  return out;
+}
+
+await run("each calendar is drawn with its state, and none is labeled not ready", async () => {
+  const page = loadPage(DIR, "setup.html", {
+    routes: setupRoutes({
+      "/api/calendar": calendarsWith("apple_reminders", {
+        enabled: true, state: "denied", detail: "Syllabus is not allowed to use Reminders.",
+      }),
+    }),
+  });
+  await page.window.loadCalendars();
+  await page.settle();
+  const rows = [...page.$("calendars").querySelectorAll(".cal")];
+  equal(rows.map((r) => r.dataset.key), ["apple_calendar", "apple_reminders", "google_calendar"],
+    "the three calendars were not all drawn, in order");
+  const reminders = rows[1];
+  assert(reminders.querySelector(".calOn").checked, "an enabled calendar showed as off");
+  equal(reminders.querySelector(".dot").className, "dot bad", "denied access did not read as a problem");
+  assert(/not allowed/.test(reminders.querySelector(".calText").textContent),
+    "the reason access is missing was not shown");
+  assert(!rows.some((r) => r.querySelector(".preview")), "a calendar was labeled not ready");
+  equal(rows[0].querySelector(".calName").value, like("/api/calendar").destinations[0].name,
+    "the calendar name was not filled in");
+  await page.close();
+});
+
+await run("switching a calendar on asks the route, and a refusal is shown", async () => {
+  const posted = [];
+  const page = loadPage(DIR, "setup.html", {
+    routes: setupRoutes({
+      "/api/calendar": (body) => {
+        if (body === undefined) return like("/api/calendar");
+        posted.push(body);
+        return { __status: 400, ok: false, error: "Syllabus is not allowed to use Calendars." };
+      },
+    }),
+  });
+  await page.window.loadCalendars();
+  await page.settle();
+  const box = page.$("calendars").querySelector('[data-key="apple_calendar"] .calOn');
+  box.checked = true;
+  box.dispatchEvent(new page.window.Event("change"));
+  await page.settle();
+  equal(posted, [{ destination: "apple_calendar", enabled: true }], "the toggle sent the wrong request");
+  assert(/not allowed/.test(page.$("flash").textContent), "the refusal was not shown");
+  // Redrawn from the route afterward, so the box goes back to what is saved.
+  const again = page.$("calendars").querySelector('[data-key="apple_calendar"] .calOn');
+  equal(again.checked, false, "a refused calendar still looks switched on");
+  await page.close();
+});
+
+await run("Google's sign-in is watched until it finishes", async () => {
+  let running = true;
+  const page = loadPage(DIR, "setup.html", {
+    routes: setupRoutes({
+      "/api/calendar": (body) => {
+        if (body !== undefined) return { ok: true, connecting: true };
+        const out = like("/api/calendar");
+        out.connecting = { running, error: "" };
+        return out;
+      },
+    }),
+  });
+  await page.window.loadCalendars();
+  await page.settle();
+  const box = page.$("calendars").querySelector('[data-key="google_calendar"] .calOn');
+  box.checked = true;
+  box.dispatchEvent(new page.window.Event("change"));
+  await page.settle();
+  assert(page.timers.some((t) => t.kind === "interval"), "nothing is watching the sign-in");
+  assert(/signing in to Google/.test(page.$("calendars").textContent),
+    "the page does not say it is waiting on the browser");
+  running = false;
+  await page.fire();
+  assert(/Google Calendar connected/.test(page.$("flash").textContent),
+    "a finished sign-in was not announced");
+  await page.close();
+});
+
 // --- Excusing a class that did not meet ------------------------------------
 
 /** A status payload whose week holds one missed class and one called off. */
@@ -396,6 +483,144 @@ await run("the button excuses the class it sits on, and takes it back", async ()
   equal(posted.length, 2, "the undo sent nothing");
   assert(page.calls.some((c) => String(c.url).endsWith("/api/class/restore")),
     "the undo did not reach the restore route");
+  await page.close();
+});
+
+// --- Permission to record, asked once before the first recording ------------
+
+/** The status payload with consent `given` or not. */
+function statusWithConsent(given) {
+  const status = like("/api/status");
+  status.consent = { ...status.consent, given };
+  return status;
+}
+
+await run("the record card asks for permission to record, and only until it has it", async () => {
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({ "/api/status": statusWithConsent(false) }),
+  });
+  await page.window.poll();
+  await page.settle();
+  const box = page.$("consentBox");
+  equal(box.hidden, false, "a Mac with no permission on file was not asked for it");
+  assert(page.$("consentText").textContent.includes("permission to record"),
+    `the box does not show what is being agreed to: ${page.$("consentText").textContent}`);
+  // The question sits beside the button; it does not take the button away.
+  assert(!page.$("recBtn").disabled, "the record button was disabled instead of asking");
+
+  page.window.renderRecord(statusWithConsent(true));
+  equal(box.hidden, true, "the box stayed up after permission was given");
+  await page.close();
+});
+
+await run("pressing record without permission asks for it instead of starting", async () => {
+  const posted = [];
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": statusWithConsent(false),
+      "/api/record/start": (body) => { posted.push(body); return { ok: true, device: "d", planned: "p" }; },
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  page.$("consentBox").hidden = true;
+  page.$("recBtn").click();
+  await page.settle();
+  equal(posted, [], "the page asked the recorder to start without permission on file");
+  equal(page.$("consentBox").hidden, false, "the page did not show where to give permission");
+  assert(/permission to record/.test(page.$("flash").textContent), page.$("flash").textContent);
+  await page.close();
+});
+
+await run("Confirm needs the box ticked, then sends an explicit yes", async () => {
+  const posted = [];
+  let given = false;
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": () => statusWithConsent(given),
+      "/api/consent": (body) => { posted.push(body); given = true; return { ok: true, given: true }; },
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  page.$("consentBtn").click();
+  await page.settle();
+  equal(posted, [], "Confirm sent a yes nobody ticked");
+  assert(/Tick the box/.test(page.$("flash").textContent), page.$("flash").textContent);
+
+  page.$("consentCheck").checked = true;
+  page.$("consentBtn").click();
+  await page.settle();
+  equal(posted, [{ agree: true }], "Confirm did not send the yes");
+  equal(page.$("consentBox").hidden, true, "the box stayed up after Confirm");
+  await page.close();
+});
+
+await run("a refusal from the recorder brings the question back", async () => {
+  // The page's last status said permission was on file; by the time Record
+  // is pressed it is not (the file was removed since). The answer is the box,
+  // and the poll that follows the press must not hide it again.
+  let onFile = true;
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": () => statusWithConsent(onFile),
+      "/api/record/start": () => {
+        onFile = false;
+        return {
+          __status: 403, ok: false, consent_required: true,
+          error: "Before this Mac records, confirm that you have permission to record.",
+        };
+      },
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  equal(page.$("consentBox").hidden, true, "the box showed with permission on file");
+  page.$("recBtn").click();
+  await page.settle();
+  equal(page.$("consentBox").hidden, false, "a consent refusal did not bring the box back");
+  await page.close();
+});
+
+await run("the Setup page requires the permission box once, then shows it given", async () => {
+  const posted = [];
+  const settings = (given) => {
+    const s = like("/api/setup", { schedule: [{ day: "Mon", start: 9, course: "ENTR-4306" }] });
+    s.consent = { ...s.consent, given, agreed_at: given ? "2026-09-26T15:00:00+00:00" : "" };
+    return s;
+  };
+  let given = false;
+  const page = loadPage(DIR, "setup.html", {
+    routes: setupRoutes({
+      "/api/setup": (body) => {
+        if (body) { posted.push(body); given = true; return { ok: true, configured: true, classes: 1 }; }
+        return settings(given);
+      },
+    }),
+  });
+  await page.window.load();
+  await page.settle();
+  const box = page.$("consent");
+  equal([box.checked, box.disabled, box.required], [false, false, true],
+    "an unconfirmed Mac must be shown an empty, required box");
+  assert(page.$("consentText").textContent.includes("permission to record"),
+    page.$("consentText").textContent);
+
+  const submit = () => page.$("form").dispatchEvent(
+    new page.window.Event("submit", { cancelable: true }));
+  submit();
+  await page.settle();
+  equal(posted, [], "Save went ahead with the permission box empty");
+  assert(/permission to record/.test(page.$("flash").textContent), page.$("flash").textContent);
+
+  box.checked = true;
+  submit();
+  await page.settle();
+  equal(posted.length, 1, "Save did not send the form once the box was ticked");
+  equal(posted[0].consent, true, "the tick did not reach the route");
+  equal([box.checked, box.disabled], [true, true],
+    "once given, the box should read as given and not be untickable by accident");
+  assert(/Confirmed/.test(page.$("consentHint").textContent), page.$("consentHint").textContent);
   await page.close();
 });
 

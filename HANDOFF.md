@@ -167,26 +167,33 @@ use, which was about six failed reconnect attempts that logged nothing,
 because the client only printed on `on_open`. PR #67 added logging for failed
 reconnects and cut the status-poll noise (93% of the log); the cause of that
 gap is still unattributed, deliberately, until a day of real use is read back.
-Separately, `src/panel-relay.ts` line 86 still sets a
-`WebSocketRequestResponsePair("ping", "pong")` auto-response, which matches a
-text message whose body is `ping`; the client sends protocol-level ping frames
-(`run_forever(ping_interval=...)`), so the two never meet and the keepalive the
-Worker's comment describes is not the one the client sends. Not yet fixed.
-`panel.log` also never rotates (3.7 MB and 54,000 lines when read).
+The keepalive mismatch the audit also found (the Worker's text `ping`/`pong`
+auto-response never met the client's protocol ping frames) is resolved once
+syllabus-accounts #37 (still open on 2026-09-26) ships alongside LectureAI's
+text heartbeat: the panel
+also sends the text message `ping` every 30 seconds (`HEARTBEAT` in
+`intake/relay.py`; a Mac gets it only with a release built after it), and
+with #37 the service closes a socket that has sent one and then goes 90
+seconds without (`PANEL_SILENCE_MS`). A beat the panel cannot send closes
+the socket from this end too, so the loop reconnects. Protocol pings stay, so the
+panel still notices a dead link from its side. Keep the two paces in step.
+`panel.log` used to never rotate (3.7 MB and 54,000 lines when read); since
+the chunk-resume PR, `intake/logfiles.py` moves it to `panel.log.1` past 2 MB
+(two old copies kept), at panel start and every ten minutes, and repoints the
+launchd-redirected stdout and stderr at the fresh file. `pipeline.log` is the
+lecture history and is deliberately never rotated.
 
-**`npm test` in syllabus-accounts hangs, and CI retries it six times.**
-`@cloudflare/vitest-pool-workers` deadlocks at a rate that swings between
-1-in-6 and 4-in-5 locally and is worse on GitHub runners; it hangs either at
-startup with only the `RUN v4.x` banner, or after every test has passed. It is
-content-independent (a duplicate of a passing file reproduces it), so read the
-per-file counts before blaming a branch. `ci.yml` runs up to six attempts of
-`timeout --signal=KILL 150` inside a 20-minute job and retries only on exit
-137/124, so a real failure can never be retried into a pass. Locally, run
-vitest in the background and kill it after ~120 seconds; macOS has no
-`timeout`. Two other flakes in the same suite: `devices.test.ts` "limits
-polling too" can exceed the 5,000 ms default on CI (needs an explicit
-timeout), and `proxy.test.ts` "rate limits an account that floods it" straddles
-a fixed 60-second window on a slow runner (needs a stubbed clock).
+**`npm test` in syllabus-accounts used to hang; CI still retries it.** The
+vitest-pool-workers deadlock stopped after the relay test-teardown fix of
+2026-09-18: per syllabus-accounts #37 (not yet merged), 27 consecutive CI runs passed on the
+first attempt and the full suite ran 10/10 clean locally. `ci.yml` keeps its
+retry loop (up to six attempts of `timeout --signal=KILL 150`, retried only on
+exit 137/124, so a real failure is never retried into a pass). If it hangs
+again, suspect a test socket nothing waits on. Locally, run vitest in the
+background and kill it after about 120 seconds; macOS has no `timeout`. The
+two rate-limit flakes (`devices.test.ts` "limits polling too" and the proxy
+flood tests) straddle a fixed 60-second window; #37 freezes the clock for
+them once it merges.
 
 **Two Google OAuth clients, and why `drive.file` grants are per project.**
 The bundled Desktop client (`intake/credentials.json`, committed on purpose;
@@ -223,9 +230,12 @@ columns in `migrations/0005_usage.sql` (`account_id`, `audio_seconds`,
 `summary_tokens`, `source`, `updated_at`); one `DELETE` reverses it. To see
 where an account stands, query D1 (`SELECT kind, SUM(units) FROM usage WHERE
 account_id=... AND period='YYYY-MM' GROUP BY kind`), not the panel's message.
-Known and deferred: a transcription that fails mid-upload re-bills every chunk,
-because resume saves the transcript only after every chunk succeeds (one
-73-minute lecture was billed three times on 2026-09-17).
+A transcription that failed mid-upload used to re-bill every chunk, because
+resume saved the transcript only after every chunk succeeded (one 73-minute
+lecture was billed three times on 2026-09-17). Now each chunk's text is kept in
+the resume slot's `chunks/` folder as it lands, keyed by the source file's size
+and mtime, the provider, its chunk length, and the split, and a retry sends only
+the chunks that never came back.
 
 **Groq is primary, OpenAI is the fallback, and the split lives in the data.**
 `/proxy/transcribe` tries Groq `whisper-large-v3` ($0.111/hr) and falls back to
@@ -243,16 +253,19 @@ registered in `intake/providers.py` and not used by the managed path; it is
 one constant in `proxy.ts`, gated on a real-lecture quality benchmark nobody
 has run.
 
-**The study assistant is BYO key only and bypasses the proxy.** Shipped
-2026-09-19 (LectureAI #79) in `intake/assistant.py` behind `/api/assistant`
-and `/api/assistant/ask` (SSE): two-stage context (every summary for a course
-as cited, cached document blocks; full transcripts only when the model calls
-`fetch_transcripts` with a reason). It calls Anthropic directly on the Mac's
-own `ANTHROPIC_API_KEY` from `.env`, even when the Mac is signed in and
-everything else goes through the service, so it works on Trace's Mac and for
-nobody else. What is still P7's work: a metered `/proxy/assistant` and a
-session cap wired to the entitlement (`assistant_sessions` is already a column
-on `allowances`, unenforced). `config.ASSISTANT_MODEL = "claude-sonnet-5"` is
+**The study assistant runs through `/proxy/assistant` on a signed-in Mac.**
+Shipped 2026-09-19 (LectureAI #79) in `intake/assistant.py` behind
+`/api/assistant` and `/api/assistant/ask` (SSE): two-stage context (every
+summary for a course as cited, cached document blocks; full transcripts only
+when the model calls `fetch_transcripts` with a reason). It first ran only on
+the Mac's own `ANTHROPIC_API_KEY`. Since 2026-09-26 (syllabus-accounts #40
+and the LectureAI PR beside it) a signed-in Mac sends the summaries it read
+from Drive to `/proxy/assistant`, which holds the key, the prompt, and the
+session count: Pro's 15 a month, each good for 12 questions, an hour, or
+$2.00. On an escalation the service hands back the model's call, the Mac
+reads the transcripts, and posts them with the `continuation`. A Mac with no
+account still uses its own key, with the prompt copied in `assistant.py`
+(keep the two in step). `config.ASSISTANT_MODEL = "claude-sonnet-5"` is
 a pricing decision with a test pinning it: Pro at $25 nets 53% on Sonnet and
 29% on Opus. Every session appends JSON to `assistant.log` in the profile home;
 `assistant.escalation_rate()` reads the rate the tiers are priced on (modeled
@@ -389,8 +402,9 @@ except one hardening PR. The Cloudflare Tunnel and the panel's own sign-in,
 retired. The Google Cloud project published. Releases v0.2.0 through v0.4.0
 built by `release.yml`, so "it has never run" under P0 is stale.
 
-**Half done.** P7 study assistant: the BYO single-Mac version is shipped;
-`/proxy/assistant` and the entitlement cap are not.
+**Nearly done.** P7 study assistant: the BYO single-Mac version is shipped,
+and `/proxy/assistant` with the session cap is in review (syllabus-accounts
+#40).
 
 **Open, roughly in the order the plan wants them.** P0: Apple enrollment
 (deferred on cost), Developer ID signing and notarization in `build.sh` and
@@ -433,8 +447,8 @@ Google sign-in when signed out and your own account page when signed in.
 `ANTHROPIC_API_KEY` (which the study assistant spends), an unused secret for
 the old LectureAI-project Web client, and whatever else the Setup page saved.
 None of it is in either repo and none of it is meant to be shared. A signed-in
-Mac needs no keys for transcription or summaries; the assistant needs an
-Anthropic key of your own until `/proxy/assistant` exists.
+Mac needs no keys for transcription, summaries, or (once syllabus-accounts
+#40 is deployed) the assistant.
 
 **Notion.** The pipeline's Notion step files action items into Trace's own
 weekly to-do pages through an internal integration secret in his `.env`

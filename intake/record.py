@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from intake import config
+from intake import consent
 from intake import tools
 from intake import transcribe
 
@@ -389,6 +390,10 @@ class Recorder:
                 f"{other.started:%H:%M} by an earlier panel or terminal. Stop "
                 f"that one first; the panel shows it, or run  intake record"
             )
+        # Every recording starts here, whichever front end asked for it, so
+        # this is the one check that cannot be skipped. After the two above on
+        # purpose: a recording that is already running is not a new one.
+        consent.require()
 
         device_index, self.device_name = resolve_device(self.device)
         self.started = datetime.now()
@@ -696,6 +701,13 @@ def main(argv: list[str] | None = None) -> int:
             marker = " <- default" if index == active_index else ""
             print(f"  [{index}] {name}{marker}")
         return 0
+
+    # Said before anything else happens, with the command that fixes it. The
+    # recorder refuses on its own as well; this is only the friendlier place.
+    # A recording that is already running can still be picked up and stopped.
+    if not consent.given() and _read_state() is None:
+        log(f"error: {consent.refusal()}")
+        return 1
 
     try:
         known = {code.upper(): code for code in config.courses()}

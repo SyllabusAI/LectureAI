@@ -274,6 +274,188 @@ def t15():
 results.append(run("the assistant runs on Sonnet 5", t15))
 
 
+# --- The managed path: the same stages through /proxy/assistant --------------
+
+STORE = {"1aBcProcessCosting15xyzQ": "process summary",
+         "1aBcCostVolumeProfit17xyQ": "cvp summary",
+         "TRANSCRIPT:ACCT-4321_2026-09-15_Process-Costing": "the full words"}
+
+
+class Service:
+    """/proxy/assistant, scripted: one (status, events-or-body) per call."""
+
+    def __init__(self, *replies):
+        self.replies, self.bodies = list(replies), []
+
+    def __call__(self, body):
+        self.bodies.append(json.loads(json.dumps(body)))
+        status, got = self.replies.pop(0)
+        return status, (iter(got) if status == 200 else got)
+
+
+def managed(service):
+    setup()
+    assistant._SESSIONS.clear()
+    assistant.managed = lambda: True
+    assistant.stream_transport = service
+    return FakeService(dict(STORE))
+
+
+def answer(session="sess_1", opened=True, text="Process costing pools costs."):
+    return (200, [
+        {"type": "session", "id": session, "opened": opened, "questions_left": 11},
+        {"type": "text", "text": text},
+        {"type": "citation", "title": "ACCT-4321 2026-09-15: Process Costing"},
+        {"type": "done", "session_id": session, "stop_reason": "end_turn", "escalating": False,
+         "cost_microusd": 41000, "input_tokens": 900, "output_tokens": 300,
+         "cache_read_tokens": 0, "cache_write_tokens": 5000},
+    ])
+
+
+def t16():
+    svc = Service(answer())
+    drive = managed(svc)
+    # No key is set in this home: reaching the BYO path would fail loudly.
+    events = list(assistant.ask("What is process costing?", "ACCT-4321", service=drive))
+    kinds = [e["type"] for e in events]
+    assert kinds == ["status", "text", "citation", "done"], events
+    sent = svc.bodies[0]
+    assert "session_id" not in sent, sent
+    assert sent["question"] == "What is process costing?", sent
+    assert [d["title"] for d in sent["summaries"]] == [
+        "ACCT-4321 2026-09-17: Cost Volume Profit", "ACCT-4321 2026-09-15: Process Costing"], sent
+    assert all(set(d) == {"title", "context", "body"} for d in sent["summaries"]), sent
+    assert events[-1]["cost_microusd"] == 41000 and events[-1]["escalated"] is False, events[-1]
+    line = json.loads((config.BASE_DIR / "assistant.log").read_text().splitlines()[0])
+    assert line["managed"] is True and line["cost_microusd"] == 41000, line
+    assert assistant._SESSIONS["ACCT-4321"] == "sess_1", assistant._SESSIONS
+results.append(run("a signed-in Mac asks through the account service, with no key", t16))
+
+
+def t17():
+    svc = Service(answer(), (409, {"error": "session_ended", "reason": "expired"}),
+                  answer(session="sess_2"))
+    drive = managed(svc)
+    list(assistant.ask("first", "ACCT-4321", service=drive))
+    events = list(assistant.ask("second", "ACCT-4321", service=drive))
+    assert svc.bodies[1]["session_id"] == "sess_1", svc.bodies[1]
+    assert "session_id" not in svc.bodies[2], "a spent session was sent again"
+    assert events[-1]["type"] == "done", events
+    assert assistant._SESSIONS["ACCT-4321"] == "sess_2", assistant._SESSIONS
+results.append(run("follow-ups ride on the session, and a spent one is replaced once", t17))
+
+
+def t18():
+    continuation = [{"type": "text", "text": "Checking."},
+                    {"type": "tool_use", "id": "toolu_1", "name": "fetch_transcripts",
+                     "input": {"lectures": ["ACCT-4321 2026-09-15: Process Costing"], "reason": "exact words"}}]
+    first = (200, [
+        {"type": "session", "id": "sess_1", "opened": True},
+        {"type": "text", "text": "Checking."},
+        {"type": "escalate", "session_id": "sess_1", "reason": "exact words",
+         "lectures": ["ACCT-4321 2026-09-15: Process Costing"], "continuation": continuation},
+        {"type": "done", "stop_reason": "tool_use", "escalating": True, "cost_microusd": 30000,
+         "input_tokens": 900, "output_tokens": 60, "cache_read_tokens": 0, "cache_write_tokens": 5000},
+    ])
+    svc = Service(first, answer(opened=False, text="The instructor said..."))
+    drive = managed(svc)
+    events = list(assistant.ask("the exact definition?", "ACCT-4321", service=drive))
+    status = [e["text"] for e in events if e["type"] == "status"]
+    assert status[-1] == "Going to the full transcripts: exact words", status
+    second = svc.bodies[1]
+    assert second["session_id"] == "sess_1" and second["continuation"] == continuation, second
+    assert second["transcripts"][0]["body"] == "the full words", second["transcripts"]
+    assert second["summaries"] == svc.bodies[0]["summaries"], "the cached prefix changed"
+    done = events[-1]
+    assert done["escalated"] and done["escalated_to"] == ["ACCT-4321 2026-09-15: Process Costing"], done
+    assert done["cost_microusd"] == 71000 and done["output_tokens"] == 360, done
+    assert assistant.escalation_rate() == {"sessions": 1, "escalated": 1, "rate": 1.0}
+results.append(run("an escalation reads the transcripts here and sends them back", t18))
+
+
+def t19():
+    svc = Service((402, {"error": "allowance_exhausted", "kind": "assistant", "unit": "sessions",
+                         "used": 0, "allowance": 0}))
+    events = list(assistant.ask("q", "ACCT-4321", service=managed(svc)))
+    assert events[-1]["type"] == "error" and "Pro plan" in events[-1]["text"], events[-1]
+    svc = Service((402, {"error": "allowance_exhausted", "kind": "assistant", "unit": "sessions",
+                         "used": 15, "allowance": 15}))
+    events = list(assistant.ask("q", "ACCT-4321", service=managed(svc)))
+    assert "all 15" in events[-1]["text"], events[-1]
+    assert "\u2014" not in events[-1]["text"], "an em dash in panel copy"
+    assert assistant.escalation_rate()["sessions"] == 0, "a refused question was logged"
+results.append(run("a plan without sessions, or a month without any left, says which", t19))
+
+
+def t20():
+    svc = Service((200, [{"type": "session", "id": "s"}, {"type": "text", "text": "Half"},
+                         {"type": "error", "error": "provider_unavailable"}]))
+    events = list(assistant.ask("q", "ACCT-4321", service=managed(svc)))
+    assert events[-1] == {"type": "error",
+                          "text": "The assistant could not be reached. Ask again in a moment."}, events
+    assert assistant.escalation_rate()["sessions"] == 0
+results.append(run("an answer the service could not finish ends in an error, not a done", t20))
+
+
+class OwnKeyReached(Exception):
+    """Where the BYO path would call the model. It reports it as an error event."""
+
+
+def own_key(key):
+    """Put a key of the Mac's own in config, and a client that records it."""
+    import anthropic
+    made = []
+
+    class Client:
+        def __init__(self, api_key=None, **kw):
+            made.append(api_key)
+
+        @property
+        def messages(self):
+            raise OwnKeyReached()
+
+    saved = (config.ANTHROPIC_API_KEY, anthropic.Anthropic)
+    config.ANTHROPIC_API_KEY = key
+    anthropic.Anthropic = Client
+
+    def restore():
+        config.ANTHROPIC_API_KEY, anthropic.Anthropic = saved
+    return made, restore
+
+
+def through(drive):
+    """ask() with the BYO path cut off where it would call the model."""
+    return list(assistant.ask("q", "ACCT-4321", service=drive))
+
+
+def t21():
+    no_plan = (402, {"error": "allowance_exhausted", "kind": "assistant", "unit": "sessions",
+                     "used": 0, "allowance": 0})
+    made, restore = own_key("sk-ant-own")
+    try:
+        # No sessions on the plan, a key of its own: it answers on that key.
+        events = through(managed(Service(no_plan)))
+        statuses = [e["text"] for e in events if e["type"] == "status"]
+        assert statuses == ["Reading 2 summaries", "Using your own Anthropic key"], statuses
+        assert made == ["sk-ant-own"], made
+        assert not any("Pro plan" in e.get("text", "") for e in events), events
+        # A service without the route yet (404) does the same.
+        made.clear()
+        through(managed(Service((404, {}))))
+        assert made == ["sk-ant-own"], made
+        # A Pro month that is spent is not moved onto the person's own bill.
+        made.clear()
+        events = through(managed(Service((402, {"error": "allowance_exhausted", "kind": "assistant",
+                                                "unit": "sessions", "used": 15, "allowance": 15}))))
+        assert events[-1]["type"] == "error" and "all 15" in events[-1]["text"], events
+        assert made == [], "a spent Pro month fell back to the own key"
+    finally:
+        restore()
+    # And with no key of its own, the plan's refusal stands.
+    events = through(managed(Service(no_plan)))
+    assert events[-1]["type"] == "error" and "Pro plan" in events[-1]["text"], events
+results.append(run("a signed-in Mac with its own key keeps answering when the plan has no sessions", t21))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

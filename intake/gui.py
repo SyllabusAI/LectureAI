@@ -35,8 +35,9 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 
-from intake import account, assistant, cancellations, config, doctor, insights, relay, service, setup_wizard
-from intake import signin, sync
+from intake import account, assistant, cancellations, config, consent, doctor, insights, relay, service, setup_wizard
+from intake import calendars
+from intake import logfiles, signin, sync
 from intake import updates
 from intake import notion_tasks
 from intake import record as recording
@@ -434,6 +435,9 @@ def status():
             "stalled": rec.stalled if active else False,
             "warning": rec.warning if active else "",
         },
+        # Whether this Mac may start a recording at all (consent.py). The
+        # record card asks for it when it is missing.
+        "consent": consent.summary(),
         "watcher": {"running": pid is not None, "pid": pid},
         "processing": _processing(pid),
         "inbox": _inbox(),
@@ -546,11 +550,48 @@ def record_start():
         try:
             _recorder = recording.Recorder(course=course)
             _recorder.start()
+        except consent.ConsentRequired:
+            # Its own status and flag, so the page can show the checkbox
+            # rather than a bare error. 403: nothing is wrong with the
+            # request, this Mac is not yet allowed to make it.
+            _recorder = None
+            return jsonify({"ok": False, "error": consent.panel_refusal(),
+                            "consent_required": True}), 403
         except Exception as exc:
             _recorder = None
             return jsonify({"ok": False, "error": str(exc)}), 500
         return jsonify({"ok": True, "device": _recorder.device_name,
                         "planned": _recorder.planned_name})
+
+
+def _record_consent() -> None:
+    """File the acknowledgment with where it really came from.
+
+    The same two pages answer on this Mac and through the relay, and the
+    record is the evidence of who agreed and how, so a yes given from a phone
+    through the account service says so, and names the viewer the service
+    vouched for, rather than reading as though someone clicked it here.
+    """
+    if g.get("relayed"):
+        consent.record("web", by=g.get("viewer", ""))
+    else:
+        consent.record("panel")
+
+
+@app.post("/api/consent")
+def consent_give():
+    """Record that the person has permission to record. Asked once per profile.
+
+    Only an explicit `agree: true` counts. There is no way to take it back
+    from here; deleting consent.json from the home does that.
+    """
+    payload = _body()
+    if payload.get("agree") is not True:
+        return jsonify({"ok": False, "error": "tick the box to confirm you have "
+                        "permission to record"}), 400
+    config.ensure_home()
+    _record_consent()
+    return jsonify({"ok": True, **consent.summary()})
 
 
 @app.post("/api/record/stop")
@@ -771,6 +812,7 @@ def setup_state():
             "account": _drive_account_state(),
         },
         "configured": _configured(),
+        "consent": consent.summary(),
     })
 
 
@@ -864,12 +906,22 @@ def setup_save():
             return jsonify({"ok": False, "error": "Notion needs both the integration "
                             "secret and the database URL, or untick it to skip"}), 400
 
+    # The permission box is required, once. After it is on file the page
+    # shows it ticked and a save that leaves it out is fine.
+    agreed = payload.get("consent") is True
+    if not agreed and not consent.given():
+        return jsonify({"ok": False, "field": "consent",
+                        "error": f"tick \"{consent.LABEL}\" to confirm you have "
+                                 f"permission to record, then save"}), 400
+
     config.ensure_home()
     try:
         setup_wizard.write_env(config.ENV_FILE, values, notion_skipped=skipped)
     except setup_wizard.UnsafeSetting as exc:
         # The file is written whole or not at all, so nothing was saved.
         return jsonify({"ok": False, "error": str(exc)}), 400
+    if agreed and not consent.given():
+        _record_consent()
     config.write_schedule(meetings, tolerance)
     config.reload()
     # The account's copy follows the file, when this Mac is signed in.
@@ -930,6 +982,100 @@ def drive_disconnect():
     except OSError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
     return jsonify({"ok": True})
+
+
+# --- Calendars ------------------------------------------------------------------
+#
+# Their own routes rather than fields on /api/setup: switching a calendar on
+# asks macOS or Google for permission there and then, which a form that saves
+# everything at once cannot wait on, and none of it needs a schedule.
+
+# Google Calendar's sign-in runs in the browser, like Drive's, so the page
+# polls for it. Only one at a time.
+_calendar_connect = {"running": False, "error": ""}
+
+
+def _calendar_key(payload: dict) -> str:
+    key = _text(payload, "destination")
+    if key not in calendars.KEYS:
+        raise _BadRequest(f"destination must be one of {', '.join(calendars.KEYS)}")
+    return key
+
+
+def _run_google_connect(updates: dict[str, str]) -> None:
+    try:
+        state, detail = calendars.connect(calendars.GOOGLE)
+        if state == "granted":
+            calendars.write_settings({**updates, calendars.SETTING[calendars.GOOGLE]: "on"})
+            _calendar_connect["error"] = ""
+        else:
+            _calendar_connect["error"] = detail
+    except Exception as exc:  # reported to the page, never raised into Flask
+        _calendar_connect["error"] = str(exc)
+    finally:
+        _calendar_connect["running"] = False
+
+
+@app.get("/api/calendar")
+def calendar_state():
+    """Each calendar's setting and access. Local only: never prompts."""
+    return jsonify({"destinations": calendars.describe_all(),
+                    "connecting": dict(_calendar_connect)})
+
+
+@app.post("/api/calendar")
+def calendar_save():
+    """Switch one calendar on or off, or rename where it files.
+
+    Switching Apple Calendar or Reminders on shows macOS's permission prompt
+    on this Mac and waits for the answer; it is saved as on only when allowed.
+    Google Calendar opens its sign-in in the browser and is saved as on when
+    that finishes, which the page polls for.
+    """
+    payload = _body()
+    key = _calendar_key(payload)
+    wants = payload.get("enabled")
+    if wants is not None and not isinstance(wants, bool):
+        raise _BadRequest("enabled must be true or false")
+    updates: dict[str, str] = {}
+    if "name" in payload:
+        try:
+            updates[calendars.NAME_SETTING[key]] = calendars.clean_name(_text(payload, "name"))
+        except ValueError as exc:
+            raise _BadRequest(str(exc))
+
+    if wants is True and calendars.describe(key)["state"] != "granted":
+        if key == calendars.GOOGLE:
+            if _calendar_connect["running"]:
+                return jsonify({"ok": False, "error": "a Google sign-in is already "
+                                "in progress"}), 409
+            _calendar_connect.update(running=True, error="")
+            threading.Thread(target=_run_google_connect, args=(updates,),
+                             daemon=True).start()
+            return jsonify({"ok": True, "connecting": True})
+        state, detail = calendars.connect(key)
+        if state != "granted":
+            return jsonify({"ok": False, "error": detail, "state": state}), 400
+    if wants is not None:
+        updates[calendars.SETTING[key]] = "on" if wants else ""
+    if updates:
+        try:
+            calendars.write_settings(updates)
+        except setup_wizard.UnsafeSetting as exc:
+            raise _BadRequest(str(exc))
+    return jsonify({"ok": True, "destination": calendars.describe(key)})
+
+
+@app.post("/api/calendar/test")
+def calendar_test():
+    """Whether filing to this calendar would work right now. Writes nothing."""
+    key = _calendar_key(_body())
+    try:
+        state, detail = calendars.test(key)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"{calendars.LABELS[key]}: {exc}"}), 502
+    return jsonify({"ok": True, "state": state, "detail": detail,
+                    "works": state == "granted"})
 
 
 # --- The Syllabus account this Mac belongs to --------------------------------
@@ -997,15 +1143,21 @@ def account_signout():
 def assistant_state():
     """Whether the assistant can run here, and what it can be asked about.
 
-    The panel asks this once on load to decide whether to enable the box. It
-    needs a key of its own: this path talks to Anthropic directly rather than
-    through the account service, so a managed Mac still has to have one set.
+    The panel asks this once on load to decide whether to enable the box. A
+    signed-in Mac asks through the account service (/proxy/assistant), which
+    decides per question whether the plan includes sessions; a Mac with no
+    account needs an Anthropic key of its own. No network call here: whether
+    the plan allows it is answered by the first question, not by this poll.
     """
+    managed = assistant.managed()
+    ready = managed or bool(config.ANTHROPIC_API_KEY)
     return jsonify({
         "ok": True,
-        "ready": bool(config.ANTHROPIC_API_KEY),
-        "reason": "" if config.ANTHROPIC_API_KEY else
-                  "Add an Anthropic API key in Setup to use the study assistant.",
+        "ready": ready,
+        "managed": managed,
+        "reason": "" if ready else
+                  "Sign in to your Syllabus account, or add an Anthropic API key "
+                  "in Setup, to use the study assistant.",
         "model": config.ASSISTANT_MODEL,
         "courses": assistant.courses(),
         "escalation": assistant.escalation_rate(),
@@ -1023,8 +1175,8 @@ def assistant_ask():
     """
     # No cross-site check here: signin.install(app) gates every request
     # already, and this route is not special enough to second-guess it.
-    if not config.ANTHROPIC_API_KEY:
-        return jsonify({"ok": False, "error": "no Anthropic API key is set"}), 409
+    if not assistant.managed() and not config.ANTHROPIC_API_KEY:
+        return jsonify({"ok": False, "error": "not signed in and no Anthropic API key is set"}), 409
 
     body = request.get_json(silent=True) or {}
     question = str(body.get("question", ""))
@@ -1126,6 +1278,10 @@ def prepare(host: str, port: int) -> str:
     server from a thread so its window can have the main one.
     """
     url = start_url(host, port)
+    # Before the first line of this run is written, so it starts the fresh
+    # file rather than ending the old one. launchd appends this process's
+    # stdout and stderr to panel.log and nothing else ever trims it.
+    logfiles.keep_trimmed(config.HOME_DIR / "panel.log")
     print(f"{config.PROFILE.title} control panel:  {url}", file=sys.stderr, flush=True)
     needs = _setup_needs()
     if needs:

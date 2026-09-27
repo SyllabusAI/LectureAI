@@ -295,14 +295,14 @@ def document_block(title: str, body: str, context: str, cache: bool = False) -> 
     return block
 
 
-def stage_one(service, lectures: list[Lecture]) -> list[dict]:
-    """The summaries, as document blocks, with the last one marking the cache.
+def summary_docs(service, lectures: list[Lecture]) -> list[dict]:
+    """The summaries that could be read, as {title, context, body}.
 
-    The breakpoint goes on the final block so everything above it, the system
-    prompt included, is served from cache on every later turn of the session.
-    That is what makes a follow-up question cost a fraction of the first.
+    The one shape both paths start from: the BYO path turns these into
+    document blocks itself, and the managed path sends them to the account
+    service, which builds the blocks on its side.
     """
-    blocks = []
+    docs = []
     for lec in lectures:
         # One unreadable lecture must not cost the student the other twenty.
         # A summary deleted in Drive, or filed in a format that will not come
@@ -314,17 +314,27 @@ def stage_one(service, lectures: list[Lecture]) -> list[dict]:
             continue
         if not body:
             continue
-        blocks.append(document_block(
-            lec.title, body,
-            context=f"Summary of the {lec.course} lecture on {lec.date}.",
-        ))
+        docs.append({"title": lec.title, "body": body,
+                     "context": f"Summary of the {lec.course} lecture on {lec.date}."})
+    return docs
+
+
+def stage_one(service, lectures: list[Lecture]) -> list[dict]:
+    """The summaries, as document blocks, with the last one marking the cache.
+
+    The breakpoint goes on the final block so everything above it, the system
+    prompt included, is served from cache on every later turn of the session.
+    That is what makes a follow-up question cost a fraction of the first.
+    """
+    blocks = [document_block(d["title"], d["body"], context=d["context"])
+              for d in summary_docs(service, lectures)]
     if blocks:
         blocks[-1]["cache_control"] = {"type": "ephemeral"}
     return blocks
 
 
-def stage_two(service, lectures: list[Lecture], wanted: list[str]) -> tuple[list[dict], list[str]]:
-    """Transcripts for the lectures the model named. Returns blocks and names.
+def transcript_docs(service, lectures: list[Lecture], wanted: list[str]) -> tuple[list[dict], list[str]]:
+    """Transcripts for the lectures the model named, as {title, context, body}.
 
     Matched loosely, because the model is quoting a title back to us rather
     than echoing an id, and a near miss should still find the lecture. Capped
@@ -343,7 +353,7 @@ def stage_two(service, lectures: list[Lecture], wanted: list[str]) -> tuple[list
         if match is not None and match not in picked:
             picked.append(match)
 
-    blocks, used, total = [], [], 0
+    docs, used, total = [], [], 0
     for lec in picked:
         body = transcript_text(service, lec).strip()
         if not body:
@@ -352,11 +362,15 @@ def stage_two(service, lectures: list[Lecture], wanted: list[str]) -> tuple[list
             break
         total += len(body)
         used.append(lec.title)
-        blocks.append(document_block(
-            f"{lec.title} (full transcript)", body,
-            context=f"Verbatim transcript of the {lec.course} lecture on {lec.date}.",
-        ))
-    return blocks, used
+        docs.append({"title": f"{lec.title} (full transcript)", "body": body,
+                     "context": f"Verbatim transcript of the {lec.course} lecture on {lec.date}."})
+    return docs, used
+
+
+def stage_two(service, lectures: list[Lecture], wanted: list[str]) -> tuple[list[dict], list[str]]:
+    """Transcripts for the lectures the model named. Returns blocks and names."""
+    docs, used = transcript_docs(service, lectures, wanted)
+    return [document_block(d["title"], d["body"], context=d["context"]) for d in docs], used
 
 
 # --- Instrumentation --------------------------------------------------------
@@ -442,15 +456,32 @@ def ask(question: str, course: str, *, service=None, client=None):
         return
 
     started = time.time()
-    if client is None:
-        client = anthropic.Anthropic(api_key=config.require("ANTHROPIC_API_KEY"))
     if service is None:
         from intake import upload
         service = upload.get_service(interactive=False)
+    # A signed-in Mac asks through the account service, on its key and its
+    # session count. A client handed in is the BYO path by definition, which
+    # is how the tests below reach it on a Mac that happens to be signed in.
+    fell_back = False
+    if client is None and managed():
+        for event in ask_managed(question, course, lectures, service, started):
+            if event["type"] == "_own_key":
+                fell_back = True
+                break
+            yield event
+        if not fell_back:
+            return
+        # The account cannot answer (no study sessions on its plan, or a
+        # service without the route yet) and this Mac has a key of its own,
+        # which is what answered before it signed in. Keep answering on it.
+        yield {"type": "status", "text": "Using your own Anthropic key"}
+    if client is None:
+        client = anthropic.Anthropic(api_key=config.require("ANTHROPIC_API_KEY"))
 
-    yield {"type": "status",
-           "text": f"Reading {len(lectures)} "
-                   f"{'summary' if len(lectures) == 1 else 'summaries'}"}
+    if not fell_back:  # the managed path already said so
+        yield {"type": "status",
+               "text": f"Reading {len(lectures)} "
+                       f"{'summary' if len(lectures) == 1 else 'summaries'}"}
 
     try:
         blocks = stage_one(service, lectures)
@@ -541,4 +572,227 @@ def ask(question: str, course: str, *, service=None, client=None):
            "escalated": bool(escalated_to),
            "escalated_to": escalated_to,
            "seconds": round(time.time() - started, 1),
+           **totals}
+
+
+# --- Asking through the account service --------------------------------------
+#
+# The same two stages, with the model on the other side of
+# syllabus-accounts' /proxy/assistant. This Mac still reads everything from
+# Drive; what moved is the key, the prompt, and the count of sessions, none of
+# which a Mac should be trusted to hold for somebody else's bill.
+#
+# A session is the service's, not ours: it opens on the first question and
+# carries follow-ups until it runs out of questions, time, or money. The id is
+# kept here, one per course, only so the next question can ride on it. Losing
+# it (a restart) costs a session, never an answer.
+
+_SESSIONS: dict[str, str] = {}
+
+ASSISTANT_PATH = "/proxy/assistant"
+
+#: What a refusal from /proxy/assistant means to somebody at the panel.
+ASSISTANT_REASONS = {
+    "not_a_device": "This Mac's sign-in was not accepted. Sign in again.",
+    "rate_limited": "Too many questions at once. Wait a minute and ask again.",
+    "provider_busy": "The assistant is busy right now. Ask again in a moment.",
+    "provider_unavailable": "The assistant could not be reached. Ask again in a moment.",
+    "service_ceiling": "The study assistant is paused for everyone this month. We are on it.",
+    "too_large": "That is more than one question can carry. Try a narrower question.",
+    "already_escalated": "That question already went to the full transcripts.",
+}
+
+
+def managed() -> bool:
+    from intake import account
+    return account.managed()
+
+
+def _stream(body: dict):
+    """POST to /proxy/assistant. Returns (status, events or refusal body).
+
+    On 200 the second item is an iterator over the service's events, one
+    dict each. Anything else is its JSON body. Replaced wholesale by the tests.
+    """
+    import requests
+    from intake import account
+
+    acct = account.load()
+    if not acct or not acct.token:
+        return 401, {"error": "not_a_device"}
+    base = account._destination_for_token()
+    res = requests.post(
+        base + ASSISTANT_PATH, json=body, stream=True,
+        headers={"Authorization": "Bearer " + acct.token,
+                 "Accept": "text/event-stream"},
+        # The read timeout is between bytes, not for the whole answer, and the
+        # model can think for a while before it writes its first word.
+        timeout=(account.TIMEOUT, account.SLOW_TIMEOUT),
+    )
+    if res.status_code != 200:
+        try:
+            data = res.json()
+        except ValueError:
+            data = {}
+        return res.status_code, data if isinstance(data, dict) else {}
+
+    def events():
+        with res:
+            for line in res.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data:"):
+                    continue
+                try:
+                    yield json.loads(line[5:].strip())
+                except ValueError:
+                    continue
+    return 200, events()
+
+
+stream_transport = _stream
+
+
+def own_key_answers(status: int, data: dict) -> bool:
+    """Whether a refusal should fall back to this Mac's own ANTHROPIC_API_KEY.
+
+    Only when the account cannot answer at all: a plan with no study sessions
+    (allowance 0, every account until Pro is sold), or a service that has no
+    /proxy/assistant yet (404). A Pro account that has used its month is not
+    moved onto the person's own bill without asking.
+    """
+    if not config.ANTHROPIC_API_KEY:
+        return False
+    if status == 404:
+        return True
+    return (data.get("error") == "allowance_exhausted" and data.get("unit") == "sessions"
+            and not data.get("allowance"))
+
+
+def refusal_text(status: int, data: dict) -> str:
+    """What the service said, in words for the panel."""
+    error = str(data.get("error", ""))
+    if error == "allowance_exhausted" and data.get("unit") == "sessions":
+        allowed = data.get("allowance")
+        if not allowed:
+            return "Study sessions come with the Pro plan. Upgrade from your account page to use the assistant."
+        return (f"You have used all {allowed} of this month's study sessions. "
+                f"They start again next month.")
+    if error == "allowance_exhausted":
+        return "This account has used its study assistant allowance for the month."
+    return ASSISTANT_REASONS.get(error) or f"The account service refused the question ({error or status})."
+
+
+def _round(body: dict, course: str, totals: dict, cost: list):
+    """One call to the service. Yields panel events; the last is the outcome.
+
+    The final item is {"type": "_outcome", ...}: an escalation to act on, or
+    nothing, or the error that ended it. It is consumed by ask_managed and
+    never reaches the panel.
+    """
+    status, got = stream_transport(body)
+    if status == 409 and got.get("error") == "session_ended" and body.get("session_id") \
+            and not body.get("continuation"):
+        # The session ran its course. A new question opens a new one, which
+        # is the service's call to make and to charge for.
+        _SESSIONS.pop(course, None)
+        body = {k: v for k, v in body.items() if k != "session_id"}
+        status, got = stream_transport(body)
+    if status != 200:
+        yield {"type": "_outcome", "error": refusal_text(status, got),
+               "own_key": own_key_answers(status, got)}
+        return
+
+    escalate = None
+    for event in got:
+        kind = event.get("type")
+        if kind == "session":
+            _SESSIONS[course] = str(event.get("id", ""))
+        elif kind == "text":
+            yield {"type": "text", "text": str(event.get("text", ""))}
+        elif kind == "citation":
+            yield {"type": "citation", "title": str(event.get("title", ""))}
+        elif kind == "escalate":
+            escalate = event
+        elif kind == "done":
+            # The same four keys _usage() keeps on the BYO path, so one
+            # assistant.log line reads the same whichever path wrote it.
+            for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
+                totals[key] = totals.get(key, 0) + int(event.get(key, 0) or 0)
+            cost[0] += int(event.get("cost_microusd", 0) or 0)
+        elif kind == "error":
+            yield {"type": "_outcome", "error": refusal_text(502, {"error": event.get("error", "")})}
+            return
+    yield {"type": "_outcome", "escalate": escalate}
+
+
+def ask_managed(question: str, course: str, lectures: list[Lecture], service, started: float):
+    """ask(), on the account service's key. Same events, same log line."""
+    yield {"type": "status",
+           "text": f"Reading {len(lectures)} "
+                   f"{'summary' if len(lectures) == 1 else 'summaries'}"}
+    try:
+        summaries = summary_docs(service, lectures)
+    except Exception as exc:
+        yield {"type": "error", "text": f"Could not read your notes from Drive: {exc}"}
+        return
+    if not summaries:
+        yield {"type": "error",
+               "text": f"The {course} lectures are filed, but their summaries "
+                       f"could not be read from Drive."}
+        return
+
+    body = {"question": question, "summaries": summaries}
+    if _SESSIONS.get(course):
+        body["session_id"] = _SESSIONS[course]
+    totals: dict = {}
+    cost = [0]
+    escalated_to: list[str] = []
+
+    outcome: dict = {}
+    for event in _round(body, course, totals, cost):
+        if event["type"] == "_outcome":
+            outcome = event
+        else:
+            yield event
+    if outcome.get("own_key"):
+        # Refused before a word was written, so ask() can start over on the
+        # Mac's own key. Consumed by ask() and never reaches the panel.
+        yield {"type": "_own_key"}
+        return
+    if outcome.get("error"):
+        yield {"type": "error", "text": outcome["error"]}
+        return
+
+    escalate = outcome.get("escalate")
+    if escalate:
+        reason = str(escalate.get("reason", "")).strip()
+        yield {"type": "status",
+               "text": f"Going to the full transcripts: {reason}" if reason
+                       else "Going to the full transcripts"}
+        try:
+            docs, used = transcript_docs(service, lectures, list(escalate.get("lectures", [])))
+        except Exception as exc:
+            docs, used = [], []
+            log(f"  transcript fetch failed: {exc}")
+        escalated_to.extend(used)
+        body = {"question": question, "summaries": summaries,
+                "session_id": str(escalate.get("session_id", "")),
+                "continuation": escalate.get("continuation", []),
+                "transcripts": docs}
+        outcome = {}
+        for event in _round(body, course, totals, cost):
+            if event["type"] == "_outcome":
+                outcome = event
+            else:
+                yield event
+        if outcome.get("error"):
+            yield {"type": "error", "text": outcome["error"]}
+            return
+
+    record_session(course, question, bool(escalated_to), escalated_to,
+                   {**totals, "cost_microusd": cost[0], "managed": True})
+    yield {"type": "done",
+           "escalated": bool(escalated_to),
+           "escalated_to": escalated_to,
+           "seconds": round(time.time() - started, 1),
+           "cost_microusd": cost[0],
            **totals}

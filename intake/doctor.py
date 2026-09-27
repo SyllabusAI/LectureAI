@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from intake import account, config, google_client, tools
+from intake import account, config, consent, google_client, tools
 
 MIN_PYTHON = (3, 11)
 
@@ -200,6 +200,37 @@ def check_notion() -> Check:
                  required=False)
 
 
+def check_calendars() -> list[Check]:
+    """One line per calendar that is switched on. Nothing when none is.
+
+    Local only, like everything here: macOS's permission is read without
+    asking for it, and Google Calendar's token is read from disk, never
+    tried against Google. The Setup page's Test button does that.
+    """
+    from intake import calendars
+    checks = []
+    for key in calendars.KEYS:
+        if not calendars.enabled(key):
+            continue
+        info = calendars.describe(key)
+        label = info["label"]
+        where = f"into {info['name']!r}"
+        if info["state"] == "granted":
+            checks.append(Check(label, True, f"{where}, {info['detail']}",
+                                required=False))
+        elif info["state"] == "unknown":
+            checks.append(Check(label, True, f"{where}; {info['detail']}",
+                                required=False))
+        else:
+            word = "google" if key == calendars.GOOGLE else (
+                "reminders" if key == calendars.REMINDERS else "apple")
+            checks.append(Check(
+                label, False, f"{where}, but {info['detail']}",
+                f"intake calendar --connect {word}", required=False,
+                fix_web=f"switch {label} off and on again in Setup to connect it"))
+    return checks
+
+
 def check_microphone() -> Check:
     if tools.find("ffmpeg") is None:
         return Check("microphone", False, "cannot check without ffmpeg",
@@ -220,6 +251,18 @@ def check_microphone() -> Check:
     except RuntimeError as exc:
         return Check("microphone", False, str(exc),
                      "intake setup and pick a microphone that is attached")
+
+
+def check_consent() -> Check:
+    """Whether this Mac may record at all. Required: the recorder refuses without it."""
+    on_file = consent.load()
+    if on_file is not None:
+        when = str(on_file.get("agreed_at", ""))[:10] or "a date not recorded"
+        return Check("permission to record", True, f"confirmed on {when}")
+    return Check("permission to record", False,
+                 "not confirmed yet, so recording is off",
+                 consent.fix_command(),
+                 fix_web=f"tick \"{consent.LABEL}\" in step 5 above and save")
 
 
 RETIRED_SIGNIN_KEYS = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET",
@@ -379,7 +422,9 @@ def run_checks() -> list[Check]:
         check_drive_client(),
         check_drive_token(),
         check_notion(),
+        *check_calendars(),
         check_microphone(),
+        check_consent(),
     ]
     for extra in (check_web_signin(), check_account(), check_panel_web(), check_legacy(),
                   check_old_home()):

@@ -17,7 +17,7 @@ from _test_home import fresh_home  # noqa: E402
 fresh_home()  # before config is imported, so nothing touches ~/.intake
 
 from intake import config  # noqa: E402
-from intake import cancellations, doctor, gui  # noqa: E402
+from intake import cancellations, consent, doctor, gui  # noqa: E402
 
 
 def run(label, fn):
@@ -349,6 +349,9 @@ gui.recording.list_devices = lambda: [(0, "Someone's iPhone Microphone"),
                                       (1, "MacBook Pro Microphone")]
 # And no caffeinate is started for the `sleep` that stands in for ffmpeg.
 gui.recording._keep_awake = lambda pid: None
+# Permission to record is on file for the tests below, as it is on any Mac
+# that has been set up. t52 takes it away and checks every door without it.
+consent.record("panel")
 
 
 def t18():
@@ -356,7 +359,8 @@ def t18():
     assert res.status_code == 200
     html = res.get_data(as_text=True)
     assert "Lexend Deca" in html and "#8C52FF" in html, "setup page is off-brand"
-    for step in ("API keys", "Microphone", "Class schedule", "Notion", "Google Drive"):
+    for step in ("API keys", "Microphone", "Class schedule", "Notion",
+                 "Permission to record", "Google Drive"):
         assert step in html, f"setup page is missing {step}"
     assert "/api/setup" in html and "/api/drive/login" in html
     # The panel itself must offer a way in.
@@ -1237,7 +1241,8 @@ results.append(run("watcher and agent commands, from a checkout and frozen", t38
 MUTATIONS = ["/api/record/start", "/api/record/stop", "/api/watcher/start",
              "/api/watcher/stop", "/api/login-item", "/api/drive/login",
              "/api/drive/disconnect", "/api/account/claim", "/api/account/cancel",
-             "/api/account/signout", "/api/setup", "/api/window/show"]
+             "/api/account/signout", "/api/setup", "/api/window/show",
+             "/api/consent"]
 
 
 def t39():
@@ -1339,6 +1344,14 @@ def t43():
         started.append(destination)
         return ["sleep", "20"]
 
+    def _our_sleeps():
+        # Only this process's children. A pgrep across the whole machine
+        # counted, and then SIGKILLed, any `sleep 20` anyone else was running,
+        # which on a machine running two suites at once is a failure here and
+        # a killed process somewhere else.
+        return subprocess.run(["pgrep", "-P", str(os.getpid()), "-f", "^sleep 20"],
+                              capture_output=True, text=True).stdout.split()
+
     rec_mod._ffmpeg_command = stub
     gui._recorder = None
     config.RECORDING_STATE_FILE.unlink(missing_ok=True)
@@ -1357,12 +1370,10 @@ def t43():
             t.join()
         assert sorted(codes) == [200, 409], f"both starts were accepted: {codes}"
         assert len(started) == 1, f"{len(started)} capture processes were opened"
-        live = subprocess.run(["pgrep", "-f", "^sleep 20"],
-                              capture_output=True, text=True).stdout.split()
+        live = _our_sleeps()
         assert len(live) <= 1, f"{len(live)} captures left running: {live}"
     finally:
-        for pid in subprocess.run(["pgrep", "-f", "^sleep 20"], capture_output=True,
-                                  text=True).stdout.split():
+        for pid in _our_sleeps():
             try:
                 os.kill(int(pid), signal.SIGKILL)
             except (OSError, ValueError):
@@ -1537,6 +1548,194 @@ def t47():
     finally:
         point_config_at(setup_home)
 results.append(run("a damaged cancellations file is read as none, not as a crash", t47))
+
+
+# --- panel.log rotation ----------------------------------------------------
+#
+# launchd appends the panel's stdout and stderr to panel.log and nothing ever
+# trimmed it: one read was 3.7 MB and 54,000 lines.
+
+from intake import logfiles  # noqa: E402
+
+
+def t48():
+    where = tmp / "rotation"
+    where.mkdir()
+    log = where / "panel.log"
+    log.write_text("small\n")
+    assert logfiles.rotate(log, max_bytes=100, backups=2) is False
+    assert log.read_text() == "small\n" and not (where / "panel.log.1").exists()
+
+    # Past the limit it moves aside, and the older copies shift down.
+    for generation in ("first", "second", "third"):
+        log.write_text(generation * 50)
+        assert logfiles.rotate(log, max_bytes=100, backups=2) is True, generation
+        assert not log.exists(), "the oversized log was left in place"
+    assert (where / "panel.log.1").read_text().startswith("third")
+    assert (where / "panel.log.2").read_text().startswith("second")
+    assert not (where / "panel.log.3").exists(), "kept more copies than asked"
+    # A log that is not there is not an error.
+    assert logfiles.rotate(where / "missing.log", max_bytes=1) is False
+results.append(run("panel.log rotates by size and keeps a bounded number of copies", t48))
+
+
+def t49():
+    # The launchd case: stdout and stderr ARE panel.log. After rotating, what
+    # the process prints next must land in a fresh panel.log, not keep
+    # filling the renamed copy.
+    import subprocess
+    where = tmp / "rotation-stdio"
+    where.mkdir()
+    log = where / "panel.log"
+    log.write_text("x" * 500 + "\n")
+    script = (
+        "import sys; sys.path.insert(0, sys.argv[2]); from pathlib import Path\n"
+        "from intake import logfiles\n"
+        "print('before', flush=True)\n"
+        "assert logfiles.rotate(Path(sys.argv[1]), max_bytes=100, backups=1)\n"
+        "print('after', flush=True)\n"
+        "print('after on stderr', file=sys.stderr, flush=True)\n"
+    )
+    with log.open("a") as handle:
+        subprocess.run([sys.executable, "-c", script, str(log),
+                        str(Path(__file__).resolve().parent)],
+                       stdout=handle, stderr=handle, stdin=subprocess.DEVNULL,
+                       check=True, timeout=60)
+    old = (where / "panel.log.1").read_text()
+    new = log.read_text()
+    assert "before" in old and "after" not in old, old[-80:]
+    assert new == "after\nafter on stderr\n", new
+results.append(run("after rotating, a launchd-redirected stdout writes the fresh log", t49))
+
+
+def t50():
+    # The panel trims its log on the way up, in both `intake panel` and the
+    # app, which share prepare().
+    seen = []
+    saved = (logfiles.keep_trimmed, gui.sync.sync_later, gui.relay.start,
+             gui.updates.check_later)
+    logfiles.keep_trimmed = lambda path, *a, **k: seen.append(path)
+    gui.sync.sync_later = lambda *a, **k: None
+    gui.relay.start = lambda *a, **k: None
+    gui.updates.check_later = lambda *a, **k: None
+    try:
+        gui.prepare("127.0.0.1", 18765)
+    finally:
+        (logfiles.keep_trimmed, gui.sync.sync_later, gui.relay.start,
+         gui.updates.check_later) = saved
+    assert seen == [config.HOME_DIR / "panel.log"], seen
+    # And the file it trims is the one launchd writes.
+    from intake import service
+    assert service.plist()["StandardOutPath"] == str(seen[0])
+results.append(run("the panel trims panel.log as it starts", t50))
+
+
+def t51():
+    # Something other than this process rotates panel.log away (a second
+    # `intake panel` from a terminal trims on its way up, then finds the port
+    # taken). The running panel must come back to the fresh panel.log rather
+    # than fill panel.log.1 forever, and the file it makes is private.
+    import stat
+    import subprocess
+    where = tmp / "rotation-elsewhere"
+    where.mkdir()
+    log = where / "panel.log"
+    log.write_text("")
+    script = (
+        "import os, sys, time; sys.path.insert(0, sys.argv[2]); from pathlib import Path\n"
+        "from intake import logfiles\n"
+        "log = Path(sys.argv[1])\n"
+        "logfiles.keep_trimmed(log, max_bytes=10**9, every=0.05)\n"
+        "print('before', flush=True)\n"
+        "os.replace(log, log.with_name('panel.log.1'))\n"
+        "deadline = time.monotonic() + 20\n"
+        "while not log.exists() and time.monotonic() < deadline:\n"
+        "    time.sleep(0.05)\n"
+        "print('after', flush=True)\n"
+        "print('after on stderr', file=sys.stderr, flush=True)\n"
+    )
+    with log.open("a") as handle:
+        subprocess.run([sys.executable, "-c", script, str(log),
+                        str(Path(__file__).resolve().parent)],
+                       stdout=handle, stderr=handle, stdin=subprocess.DEVNULL,
+                       check=True, timeout=60)
+    old = (where / "panel.log.1").read_text()
+    assert old == "before\n", old
+    assert log.exists(), "the panel never came back to panel.log"
+    assert log.read_text() == "after\nafter on stderr\n", log.read_text()
+    assert stat.S_IMODE(log.stat().st_mode) & 0o077 == 0, oct(log.stat().st_mode)
+results.append(run("a panel.log rotated by another process is reclaimed, privately", t51))
+
+
+def t52():
+    # Without permission to record on file: the record route refuses in a way
+    # the page understands, before anything is launched; the pages are told;
+    # Setup will not save without the box; and the dashboard's Confirm needs
+    # an explicit yes. Then each of those works once it is given.
+    point_config_at(setup_home)
+    config.CONSENT_FILE.unlink(missing_ok=True)
+    real_cmd = gui.recording._ffmpeg_command
+    launched = []
+
+    def stub(device_index, destination, limit):
+        launched.append(destination)
+        return ["sleep", "20"]
+
+    gui.recording._ffmpeg_command = stub
+    gui._recorder = None
+    try:
+        res = client.post("/api/record/start", json={})
+        assert res.status_code == 403, res.status_code
+        body = res.get_json()
+        assert body["ok"] is False and body["consent_required"] is True, body
+        assert "permission to record" in body["error"], body
+        assert launched == [] and gui._recorder is None, "the mic opened anyway"
+
+        status = client.get("/api/status").get_json()
+        assert status["consent"]["given"] is False, status["consent"]
+        assert status["consent"]["statement"] == consent.statement()
+        assert client.get("/api/setup").get_json()["consent"]["given"] is False
+
+        form = {"openai_key": "sk-a", "anthropic_key": "sk-b", "device": "",
+                "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"}],
+                "notion": {"enabled": False}}
+        before = (setup_home / "schedule.toml").read_text() \
+            if (setup_home / "schedule.toml").exists() else None
+        for missing in ({}, {"consent": False}, {"consent": "yes"}):
+            res = client.post("/api/setup", json={**form, **missing})
+            assert res.status_code == 400, (missing, res.status_code)
+            assert res.get_json()["field"] == "consent", res.get_json()
+        after = (setup_home / "schedule.toml").read_text() \
+            if (setup_home / "schedule.toml").exists() else None
+        assert before == after, "a refused save still wrote the schedule"
+        assert not consent.given()
+
+        for bad in ({}, {"agree": False}, {"agree": "true"}, {"agree": 1}):
+            res = client.post("/api/consent", json=bad)
+            assert res.status_code == 400, (bad, res.status_code)
+            assert not consent.given(), f"{bad} counted as a yes"
+
+        res = client.post("/api/setup", json={**form, "consent": True})
+        assert res.status_code == 200, res.get_json()
+        data = consent.load()
+        assert data is not None and data["source"] == "panel", data
+        assert client.get("/api/setup").get_json()["consent"]["given"] is True
+
+        # The dashboard's own button, from scratch.
+        config.CONSENT_FILE.unlink()
+        res = client.post("/api/consent", json={"agree": True})
+        assert res.status_code == 200 and res.get_json()["given"] is True, res.get_json()
+        assert client.get("/api/status").get_json()["consent"]["given"] is True
+        assert consent.given()
+
+        # And the doctor line the Setup checkup shows follows it.
+        checks = {c["name"]: c for c in client.get("/api/doctor").get_json()["checks"]}
+        assert checks["permission to record"]["ok"] is True, checks["permission to record"]
+    finally:
+        gui.recording._ffmpeg_command = real_cmd
+        gui._recorder = None
+        consent.record("panel")
+results.append(run("nothing records until permission to record is given, and each page can give it", t52))
 
 
 print()
