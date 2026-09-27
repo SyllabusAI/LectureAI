@@ -537,8 +537,12 @@ class HeldSocket:
     """A connection that stays open until close(), like a real one, and records
     every text frame sent up it with the time it was sent."""
 
-    def __init__(self, fail_sends=False, close_after_pings=None):
+    def __init__(self, fail_sends=False, close_after_pings=None, hold_max=10.0):
         self.close_after_pings = close_after_pings
+        # Longest it stays open whatever happens, so a heartbeat that never
+        # comes fails an assertion instead of hanging the suite.
+        self.hold_max = hold_max
+        self.open_time = None
         self.sent = []
         self.times = []
         self.opened = threading.Event()
@@ -552,9 +556,15 @@ class HeldSocket:
 
     def run_forever(self):
         on_open, on_message, on_close = self._cb
+        # Taken before on_open starts the heartbeat. A time read by the test
+        # thread after `opened` fires can be late on a busy runner, which made
+        # the first beat look early.
+        self.open_time = time.monotonic()
         on_open()
         self.opened.set()
         while not self.closed.wait(0.005):
+            if time.monotonic() - self.open_time > self.hold_max:
+                break
             self.peak_beats = max(self.peak_beats, len(heartbeat_threads()))
             if self.close_after_pings is not None and len(self.pings()) >= self.close_after_pings:
                 self.closed.set()  # the service drops it
@@ -592,7 +602,7 @@ def t17():
         with contextlib.redirect_stderr(io.StringIO()):
             runner.start()
             assert sock.opened.wait(5), "never opened"
-            opened_at = time.monotonic()
+            opened_at = sock.open_time
             assert wait_for(lambda: len(sock.pings()) >= 4), f"too few heartbeats: {sock.sent}"
             pings = sock.pings()
             # Exactly the four-byte text body, never JSON, and never the first
