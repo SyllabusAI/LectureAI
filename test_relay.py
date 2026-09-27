@@ -19,7 +19,7 @@ HOME = fresh_home()  # before config is imported
 
 from flask import Flask, jsonify, request  # noqa: E402
 
-from intake import account, config, gui, relay  # noqa: E402
+from intake import account, config, consent, gui, relay  # noqa: E402
 
 
 def run(label, fn):
@@ -205,6 +205,38 @@ def t7():
         res = client.get("/api/status", headers={"Intake-Relay": "1", "Intake-Viewer": "me@example.com"})
         assert res.get_json()["signed_in_as"] == ""
 results.append(run("a local request is untouched: no viewer, no base path, no relay", t7))
+
+
+def t7b():
+    # Permission to record given through the relay is filed as given on the
+    # web, by the viewer the service named, not as a click on this Mac; and a
+    # viewer who does not own the account cannot give it at all.
+    account.save(ME)
+    try:
+        config.CONSENT_FILE.unlink(missing_ok=True)
+        yes = json.dumps({"agree": True})
+        json_type = {"Content-Type": "application/json"}
+        wrong = relay.serve(gui.app, req("/api/consent", method="POST", body=yes, headers=json_type,
+                                         viewer={"email": "x@example.com", "account_id": "a2"}))
+        assert wrong[0]["status"] == 403, wrong[0]
+        assert not consent.given(), "a viewer who does not own this Mac gave permission for it"
+
+        frames = relay.serve(gui.app, req("/api/consent", method="POST", body=yes, headers=json_type))
+        assert frames[0]["status"] == 200, (frames[0], unb64(frames))
+        data = consent.load()
+        assert data is not None, "the owner's yes was not filed"
+        assert data["source"] == "web" and data["by"] == "me@example.com", data
+
+        # The same yes on this Mac says so, and names nobody.
+        config.CONSENT_FILE.unlink()
+        with gui.app.test_client() as client:
+            assert client.post("/api/consent", json={"agree": True}).status_code == 200
+        data = consent.load()
+        assert data["source"] == "panel" and "by" not in data, data
+    finally:
+        config.CONSENT_FILE.unlink(missing_ok=True)
+        account.forget()
+results.append(run("permission to record given through the relay says so, and only the owner can give it", t7b))
 
 
 # --- The loop that keeps the socket open -----------------------------------------------
@@ -517,6 +549,223 @@ def t16():
     assert quiet.filter(Line('127.0.0.1 - - [x] "POST /api/record/start HTTP/1.1" 200 -'))
     assert quiet.filter(Line('127.0.0.1 - - [x] "GET /setup HTTP/1.1" 200 -'))
 results.append(run("a healthy status poll is not worth a line, anything else is", t16))
+
+
+# --- The text heartbeat the service can see ---------------------------------------------
+
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+BEAT = 0.05  # seconds; the real pace is relay.PING_SECONDS
+
+
+def heartbeat_threads():
+    return [t for t in threading.enumerate() if t.name == "relay-heartbeat" and t.is_alive()]
+
+
+class HeldSocket:
+    """A connection that stays open until close(), like a real one, and records
+    every text frame sent up it with the time it was sent."""
+
+    def __init__(self, fail_sends=False, close_after_pings=None, hold_max=10.0):
+        self.close_after_pings = close_after_pings
+        # Longest it stays open whatever happens, so a heartbeat that never
+        # comes fails an assertion instead of hanging the suite.
+        self.hold_max = hold_max
+        self.open_time = None
+        self.sent = []
+        self.times = []
+        self.opened = threading.Event()
+        self.closed = threading.Event()
+        self.fail_sends = fail_sends
+        self.peak_beats = 0
+
+    def factory(self, url, headers, on_open, on_message, on_close, on_error):
+        self._cb = (on_open, on_message, on_close)
+        return self
+
+    def run_forever(self):
+        on_open, on_message, on_close = self._cb
+        # Taken before on_open starts the heartbeat. A time read by the test
+        # thread after `opened` fires can be late on a busy runner, which made
+        # the first beat look early.
+        self.open_time = time.monotonic()
+        on_open()
+        self.opened.set()
+        while not self.closed.wait(0.005):
+            if time.monotonic() - self.open_time > self.hold_max:
+                break
+            self.peak_beats = max(self.peak_beats, len(heartbeat_threads()))
+            if self.close_after_pings is not None and len(self.pings()) >= self.close_after_pings:
+                self.closed.set()  # the service drops it
+        on_close(1000, "bye")
+
+    def send(self, text):
+        if self.fail_sends and text == relay.HEARTBEAT:
+            raise OSError("socket is already closed")
+        self.sent.append(text)
+        self.times.append(time.monotonic())
+
+    def close(self):
+        self.closed.set()
+
+    def pings(self):
+        return [t for s, t in zip(self.sent, self.times) if s == relay.HEARTBEAT]
+
+
+def wait_for(cond, timeout=5.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.005)
+    return cond()
+
+
+def t17():
+    account.save(ME)
+    sock = HeldSocket()
+    r = relay.Relay(echo, socket_factory=sock.factory, sleep=lambda s: None,
+                    heartbeat_seconds=BEAT)
+    runner = threading.Thread(target=r._connect_once, args=(ME,), daemon=True)
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            runner.start()
+            assert sock.opened.wait(5), "never opened"
+            opened_at = sock.open_time
+            assert wait_for(lambda: len(sock.pings()) >= 4), f"too few heartbeats: {sock.sent}"
+            pings = sock.pings()
+            # Exactly the four-byte text body, never JSON, and never the first
+            # frame: the hello goes first.
+            assert json.loads(sock.sent[0])["t"] == "hello", sock.sent[0]
+            assert all(s == "ping" for s in sock.sent[1:]), sock.sent
+            # At the interval: not before one has passed, and not a burst.
+            assert pings[0] - opened_at >= BEAT * 0.8, pings[0] - opened_at
+            gaps = [b - a for a, b in zip(pings, pings[1:])]
+            assert all(g >= BEAT * 0.8 for g in gaps), gaps
+            assert len(heartbeat_threads()) == 1, heartbeat_threads()
+
+            sock.close()
+            runner.join(5)
+            assert not runner.is_alive(), "the connection never ended"
+            assert heartbeat_threads() == [], "the heartbeat outlived its socket"
+            count = len(sock.pings())
+            time.sleep(BEAT * 3)
+            assert len(sock.pings()) == count, "a heartbeat was sent after close"
+    finally:
+        sock.close()
+        account.forget()
+results.append(run("a connected panel sends the text heartbeat `ping` at the interval, and stops on close", t17))
+
+
+def t18():
+    account.save(ME)
+    socks = []
+
+    def factory(*a):
+        # Each connection holds for a few beats, then the service drops it.
+        s = HeldSocket(close_after_pings=3)
+        socks.append(s)
+        return s.factory(*a)
+
+    r = relay.Relay(echo, socket_factory=factory, sleep=lambda s: None, heartbeat_seconds=BEAT)
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            r.run(rounds=3)
+        assert len(socks) == 3, socks
+        for i, s in enumerate(socks):
+            assert s.peak_beats == 1, f"connection {i} saw {s.peak_beats} heartbeat threads"
+            assert len(s.pings()) >= 3, f"connection {i} sent {len(s.pings())} heartbeats"
+        assert heartbeat_threads() == [], "a heartbeat thread leaked across reconnects"
+    finally:
+        account.forget()
+results.append(run("one heartbeat thread per connection, none left over after reconnects", t18))
+
+
+def t19():
+    account.save(ME)
+    sock = HeldSocket()
+    r = relay.Relay(echo, socket_factory=sock.factory, sleep=lambda s: None,
+                    heartbeat_seconds=BEAT)
+    runner = threading.Thread(target=r.run, kwargs={"rounds": 5}, daemon=True)
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            runner.start()
+            assert sock.opened.wait(5)
+            assert wait_for(lambda: sock.pings())
+            r.stop()
+            runner.join(5)
+        assert not runner.is_alive(), "the loop did not stop"
+        assert wait_for(lambda: heartbeat_threads() == [], 1), "stopping the relay left a heartbeat"
+        assert r.status()["state"] == "stopped", r.status()
+    finally:
+        sock.close()
+        account.forget()
+results.append(run("stopping the relay ends the heartbeat with it", t19))
+
+
+def t20():
+    account.save(ME)
+    sock = HeldSocket(fail_sends=True)
+    r = relay.Relay(echo, socket_factory=sock.factory, sleep=lambda s: None,
+                    heartbeat_seconds=BEAT)
+    runner = threading.Thread(target=r._connect_once, args=(ME,), daemon=True)
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            runner.start()
+            assert sock.opened.wait(5)
+            assert wait_for(lambda: "heartbeat" in err.getvalue()), "a failed heartbeat said nothing"
+            time.sleep(BEAT * 5)  # ticks that, before, would each have written a line
+            sock.close()
+            runner.join(5)
+        lines = [l for l in err.getvalue().splitlines() if "heartbeat" in l]
+        assert len(lines) == 1, f"one line for a failed heartbeat, not one a tick: {lines}"
+        assert "OSError" in lines[0], lines
+        assert heartbeat_threads() == []
+    finally:
+        sock.close()
+        account.forget()
+results.append(run("a heartbeat that cannot be sent says so once, not every tick", t20))
+
+
+def t21():
+    r = relay.Relay(echo, socket_factory=lambda *a: None)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        r._on_message(relay.HEARTBEAT_REPLY)
+        r._on_message("pong")
+    assert err.getvalue() == "", f"the heartbeat's answer made noise: {err.getvalue()!r}"
+    st = r.status()
+    assert st["requests"] == 0 and r.chunk_bytes == relay.DEFAULT_CHUNK_BYTES, st
+results.append(run("the service's `pong` is ignored quietly", t21))
+
+
+def t22():
+    # A socket that cannot carry the heartbeat is one the service will drop
+    # after 90 seconds anyway. It used to stay up, "connected", until the
+    # protocol ping timed out; now the failed beat closes it and the loop
+    # reconnects. Nothing here calls sock.close().
+    account.save(ME)
+    sock = HeldSocket(fail_sends=True)
+    r = relay.Relay(echo, socket_factory=sock.factory, sleep=lambda s: None,
+                    heartbeat_seconds=BEAT)
+    runner = threading.Thread(target=r._connect_once, args=(ME,), daemon=True)
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            runner.start()
+            assert sock.opened.wait(5)
+            runner.join(5)
+        assert not runner.is_alive(), "a heartbeat that failed left its connection open"
+        assert sock.closed.is_set(), "the failed heartbeat did not close the socket"
+        assert time.monotonic() - sock.open_time < 5, "it closed on the deadline, not the failure"
+        assert heartbeat_threads() == []
+    finally:
+        sock.close()
+        account.forget()
+results.append(run("a heartbeat that cannot be sent ends the connection, so the loop reconnects", t22))
 
 
 print()

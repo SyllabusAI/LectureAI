@@ -1,6 +1,7 @@
 """The `intake` command: one entry point over every module.
 
     intake setup            first run: keys, microphone, schedule
+    intake setup --consent  confirm you have permission to record
     intake doctor           check the install and say how to fix it
     intake record           record from this Mac's microphone
     intake watch            process the inbox until Ctrl-C
