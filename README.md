@@ -138,7 +138,16 @@ intake setup
 
 It asks for the two keys, shows the microphones ffmpeg can see, takes your
 class schedule one line at a time (`Tue 14 ACCT-4321`, blank line when done),
-asks once about Notion, and offers to authorize Google Drive at the end.
+asks once about Notion, asks once whether you have permission to record,
+and offers to authorize Google Drive at the end.
+
+Nothing records until that permission is confirmed, once per profile: the
+Setup page has a required box for it, the dashboard asks beside the record
+button, and `intake setup --consent` asks only that question. The answer is
+kept in `consent.json` in the profile's home with when it was given and by
+which version. The check sits in `Recorder.start` (`intake/consent.py`), so
+the CLI, the record button, the menu bar item and the panel on the web all
+go through it; delete the file to be asked again.
 
 Either way, `intake doctor` is the check to run when something misbehaves.
 It prints one line per thing that has to be right, with the exact fix next to

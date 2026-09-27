@@ -399,6 +399,144 @@ await run("the button excuses the class it sits on, and takes it back", async ()
   await page.close();
 });
 
+// --- Permission to record, asked once before the first recording ------------
+
+/** The status payload with consent `given` or not. */
+function statusWithConsent(given) {
+  const status = like("/api/status");
+  status.consent = { ...status.consent, given };
+  return status;
+}
+
+await run("the record card asks for permission to record, and only until it has it", async () => {
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({ "/api/status": statusWithConsent(false) }),
+  });
+  await page.window.poll();
+  await page.settle();
+  const box = page.$("consentBox");
+  equal(box.hidden, false, "a Mac with no permission on file was not asked for it");
+  assert(page.$("consentText").textContent.includes("permission to record"),
+    `the box does not show what is being agreed to: ${page.$("consentText").textContent}`);
+  // The question sits beside the button; it does not take the button away.
+  assert(!page.$("recBtn").disabled, "the record button was disabled instead of asking");
+
+  page.window.renderRecord(statusWithConsent(true));
+  equal(box.hidden, true, "the box stayed up after permission was given");
+  await page.close();
+});
+
+await run("pressing record without permission asks for it instead of starting", async () => {
+  const posted = [];
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": statusWithConsent(false),
+      "/api/record/start": (body) => { posted.push(body); return { ok: true, device: "d", planned: "p" }; },
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  page.$("consentBox").hidden = true;
+  page.$("recBtn").click();
+  await page.settle();
+  equal(posted, [], "the page asked the recorder to start without permission on file");
+  equal(page.$("consentBox").hidden, false, "the page did not show where to give permission");
+  assert(/permission to record/.test(page.$("flash").textContent), page.$("flash").textContent);
+  await page.close();
+});
+
+await run("Confirm needs the box ticked, then sends an explicit yes", async () => {
+  const posted = [];
+  let given = false;
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": () => statusWithConsent(given),
+      "/api/consent": (body) => { posted.push(body); given = true; return { ok: true, given: true }; },
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  page.$("consentBtn").click();
+  await page.settle();
+  equal(posted, [], "Confirm sent a yes nobody ticked");
+  assert(/Tick the box/.test(page.$("flash").textContent), page.$("flash").textContent);
+
+  page.$("consentCheck").checked = true;
+  page.$("consentBtn").click();
+  await page.settle();
+  equal(posted, [{ agree: true }], "Confirm did not send the yes");
+  equal(page.$("consentBox").hidden, true, "the box stayed up after Confirm");
+  await page.close();
+});
+
+await run("a refusal from the recorder brings the question back", async () => {
+  // The page's last status said permission was on file; by the time Record
+  // is pressed it is not (the file was removed since). The answer is the box,
+  // and the poll that follows the press must not hide it again.
+  let onFile = true;
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": () => statusWithConsent(onFile),
+      "/api/record/start": () => {
+        onFile = false;
+        return {
+          __status: 403, ok: false, consent_required: true,
+          error: "Before this Mac records, confirm that you have permission to record.",
+        };
+      },
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  equal(page.$("consentBox").hidden, true, "the box showed with permission on file");
+  page.$("recBtn").click();
+  await page.settle();
+  equal(page.$("consentBox").hidden, false, "a consent refusal did not bring the box back");
+  await page.close();
+});
+
+await run("the Setup page requires the permission box once, then shows it given", async () => {
+  const posted = [];
+  const settings = (given) => {
+    const s = like("/api/setup", { schedule: [{ day: "Mon", start: 9, course: "ENTR-4306" }] });
+    s.consent = { ...s.consent, given, agreed_at: given ? "2026-09-26T15:00:00+00:00" : "" };
+    return s;
+  };
+  let given = false;
+  const page = loadPage(DIR, "setup.html", {
+    routes: setupRoutes({
+      "/api/setup": (body) => {
+        if (body) { posted.push(body); given = true; return { ok: true, configured: true, classes: 1 }; }
+        return settings(given);
+      },
+    }),
+  });
+  await page.window.load();
+  await page.settle();
+  const box = page.$("consent");
+  equal([box.checked, box.disabled, box.required], [false, false, true],
+    "an unconfirmed Mac must be shown an empty, required box");
+  assert(page.$("consentText").textContent.includes("permission to record"),
+    page.$("consentText").textContent);
+
+  const submit = () => page.$("form").dispatchEvent(
+    new page.window.Event("submit", { cancelable: true }));
+  submit();
+  await page.settle();
+  equal(posted, [], "Save went ahead with the permission box empty");
+  assert(/permission to record/.test(page.$("flash").textContent), page.$("flash").textContent);
+
+  box.checked = true;
+  submit();
+  await page.settle();
+  equal(posted.length, 1, "Save did not send the form once the box was ticked");
+  equal(posted[0].consent, true, "the tick did not reach the route");
+  equal([box.checked, box.disabled], [true, true],
+    "once given, the box should read as given and not be untickable by accident");
+  assert(/Confirmed/.test(page.$("consentHint").textContent), page.$("consentHint").textContent);
+  await page.close();
+});
+
 // --- The relay road --------------------------------------------------------
 
 await run("a relayed page writes every request under its device path", async () => {
