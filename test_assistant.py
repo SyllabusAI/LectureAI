@@ -397,6 +397,65 @@ def t20():
 results.append(run("an answer the service could not finish ends in an error, not a done", t20))
 
 
+class OwnKeyReached(Exception):
+    """Where the BYO path would call the model. It reports it as an error event."""
+
+
+def own_key(key):
+    """Put a key of the Mac's own in config, and a client that records it."""
+    import anthropic
+    made = []
+
+    class Client:
+        def __init__(self, api_key=None, **kw):
+            made.append(api_key)
+
+        @property
+        def messages(self):
+            raise OwnKeyReached()
+
+    saved = (config.ANTHROPIC_API_KEY, anthropic.Anthropic)
+    config.ANTHROPIC_API_KEY = key
+    anthropic.Anthropic = Client
+
+    def restore():
+        config.ANTHROPIC_API_KEY, anthropic.Anthropic = saved
+    return made, restore
+
+
+def through(drive):
+    """ask() with the BYO path cut off where it would call the model."""
+    return list(assistant.ask("q", "ACCT-4321", service=drive))
+
+
+def t21():
+    no_plan = (402, {"error": "allowance_exhausted", "kind": "assistant", "unit": "sessions",
+                     "used": 0, "allowance": 0})
+    made, restore = own_key("sk-ant-own")
+    try:
+        # No sessions on the plan, a key of its own: it answers on that key.
+        events = through(managed(Service(no_plan)))
+        statuses = [e["text"] for e in events if e["type"] == "status"]
+        assert statuses == ["Reading 2 summaries", "Using your own Anthropic key"], statuses
+        assert made == ["sk-ant-own"], made
+        assert not any("Pro plan" in e.get("text", "") for e in events), events
+        # A service without the route yet (404) does the same.
+        made.clear()
+        through(managed(Service((404, {}))))
+        assert made == ["sk-ant-own"], made
+        # A Pro month that is spent is not moved onto the person's own bill.
+        made.clear()
+        events = through(managed(Service((402, {"error": "allowance_exhausted", "kind": "assistant",
+                                                "unit": "sessions", "used": 15, "allowance": 15}))))
+        assert events[-1]["type"] == "error" and "all 15" in events[-1]["text"], events
+        assert made == [], "a spent Pro month fell back to the own key"
+    finally:
+        restore()
+    # And with no key of its own, the plan's refusal stands.
+    events = through(managed(Service(no_plan)))
+    assert events[-1]["type"] == "error" and "Pro plan" in events[-1]["text"], events
+results.append(run("a signed-in Mac with its own key keeps answering when the plan has no sessions", t21))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

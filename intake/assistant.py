@@ -462,15 +462,26 @@ def ask(question: str, course: str, *, service=None, client=None):
     # A signed-in Mac asks through the account service, on its key and its
     # session count. A client handed in is the BYO path by definition, which
     # is how the tests below reach it on a Mac that happens to be signed in.
+    fell_back = False
     if client is None and managed():
-        yield from ask_managed(question, course, lectures, service, started)
-        return
+        for event in ask_managed(question, course, lectures, service, started):
+            if event["type"] == "_own_key":
+                fell_back = True
+                break
+            yield event
+        if not fell_back:
+            return
+        # The account cannot answer (no study sessions on its plan, or a
+        # service without the route yet) and this Mac has a key of its own,
+        # which is what answered before it signed in. Keep answering on it.
+        yield {"type": "status", "text": "Using your own Anthropic key"}
     if client is None:
         client = anthropic.Anthropic(api_key=config.require("ANTHROPIC_API_KEY"))
 
-    yield {"type": "status",
-           "text": f"Reading {len(lectures)} "
-                   f"{'summary' if len(lectures) == 1 else 'summaries'}"}
+    if not fell_back:  # the managed path already said so
+        yield {"type": "status",
+               "text": f"Reading {len(lectures)} "
+                       f"{'summary' if len(lectures) == 1 else 'summaries'}"}
 
     try:
         blocks = stage_one(service, lectures)
@@ -640,6 +651,22 @@ def _stream(body: dict):
 stream_transport = _stream
 
 
+def own_key_answers(status: int, data: dict) -> bool:
+    """Whether a refusal should fall back to this Mac's own ANTHROPIC_API_KEY.
+
+    Only when the account cannot answer at all: a plan with no study sessions
+    (allowance 0, every account until Pro is sold), or a service that has no
+    /proxy/assistant yet (404). A Pro account that has used its month is not
+    moved onto the person's own bill without asking.
+    """
+    if not config.ANTHROPIC_API_KEY:
+        return False
+    if status == 404:
+        return True
+    return (data.get("error") == "allowance_exhausted" and data.get("unit") == "sessions"
+            and not data.get("allowance"))
+
+
 def refusal_text(status: int, data: dict) -> str:
     """What the service said, in words for the panel."""
     error = str(data.get("error", ""))
@@ -670,7 +697,8 @@ def _round(body: dict, course: str, totals: dict, cost: list):
         body = {k: v for k, v in body.items() if k != "session_id"}
         status, got = stream_transport(body)
     if status != 200:
-        yield {"type": "_outcome", "error": refusal_text(status, got)}
+        yield {"type": "_outcome", "error": refusal_text(status, got),
+               "own_key": own_key_answers(status, got)}
         return
 
     escalate = None
@@ -725,6 +753,11 @@ def ask_managed(question: str, course: str, lectures: list[Lecture], service, st
             outcome = event
         else:
             yield event
+    if outcome.get("own_key"):
+        # Refused before a word was written, so ask() can start over on the
+        # Mac's own key. Consumed by ask() and never reaches the panel.
+        yield {"type": "_own_key"}
+        return
     if outcome.get("error"):
         yield {"type": "error", "text": outcome["error"]}
         return
