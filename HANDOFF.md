@@ -243,16 +243,19 @@ registered in `intake/providers.py` and not used by the managed path; it is
 one constant in `proxy.ts`, gated on a real-lecture quality benchmark nobody
 has run.
 
-**The study assistant is BYO key only and bypasses the proxy.** Shipped
-2026-09-19 (LectureAI #79) in `intake/assistant.py` behind `/api/assistant`
-and `/api/assistant/ask` (SSE): two-stage context (every summary for a course
-as cited, cached document blocks; full transcripts only when the model calls
-`fetch_transcripts` with a reason). It calls Anthropic directly on the Mac's
-own `ANTHROPIC_API_KEY` from `.env`, even when the Mac is signed in and
-everything else goes through the service, so it works on Trace's Mac and for
-nobody else. What is still P7's work: a metered `/proxy/assistant` and a
-session cap wired to the entitlement (`assistant_sessions` is already a column
-on `allowances`, unenforced). `config.ASSISTANT_MODEL = "claude-sonnet-5"` is
+**The study assistant runs through `/proxy/assistant` on a signed-in Mac.**
+Shipped 2026-09-19 (LectureAI #79) in `intake/assistant.py` behind
+`/api/assistant` and `/api/assistant/ask` (SSE): two-stage context (every
+summary for a course as cited, cached document blocks; full transcripts only
+when the model calls `fetch_transcripts` with a reason). It first ran only on
+the Mac's own `ANTHROPIC_API_KEY`. Since 2026-09-26 (syllabus-accounts #40
+and the LectureAI PR beside it) a signed-in Mac sends the summaries it read
+from Drive to `/proxy/assistant`, which holds the key, the prompt, and the
+session count: Pro's 15 a month, each good for 12 questions, an hour, or
+$2.00. On an escalation the service hands back the model's call, the Mac
+reads the transcripts, and posts them with the `continuation`. A Mac with no
+account still uses its own key, with the prompt copied in `assistant.py`
+(keep the two in step). `config.ASSISTANT_MODEL = "claude-sonnet-5"` is
 a pricing decision with a test pinning it: Pro at $25 nets 53% on Sonnet and
 29% on Opus. Every session appends JSON to `assistant.log` in the profile home;
 `assistant.escalation_rate()` reads the rate the tiers are priced on (modeled
@@ -389,8 +392,9 @@ except one hardening PR. The Cloudflare Tunnel and the panel's own sign-in,
 retired. The Google Cloud project published. Releases v0.2.0 through v0.4.0
 built by `release.yml`, so "it has never run" under P0 is stale.
 
-**Half done.** P7 study assistant: the BYO single-Mac version is shipped;
-`/proxy/assistant` and the entitlement cap are not.
+**Nearly done.** P7 study assistant: the BYO single-Mac version is shipped,
+and `/proxy/assistant` with the session cap is in review (syllabus-accounts
+#40).
 
 **Open, roughly in the order the plan wants them.** P0: Apple enrollment
 (deferred on cost), Developer ID signing and notarization in `build.sh` and
@@ -433,8 +437,8 @@ Google sign-in when signed out and your own account page when signed in.
 `ANTHROPIC_API_KEY` (which the study assistant spends), an unused secret for
 the old LectureAI-project Web client, and whatever else the Setup page saved.
 None of it is in either repo and none of it is meant to be shared. A signed-in
-Mac needs no keys for transcription or summaries; the assistant needs an
-Anthropic key of your own until `/proxy/assistant` exists.
+Mac needs no keys for transcription, summaries, or (once syllabus-accounts
+#40 is deployed) the assistant.
 
 **Notion.** The pipeline's Notion step files action items into Trace's own
 weekly to-do pages through an internal integration secret in his `.env`

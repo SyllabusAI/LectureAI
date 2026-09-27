@@ -1557,7 +1557,9 @@ async function renderAssistant(s) {
   }
 
   $("askNote").textContent = info.ready
-    ? `Runs on ${info.model}, on this Mac's own Anthropic key.`
+    ? (info.managed
+        ? `Runs on ${info.model} through your Syllabus account. Study sessions come with Pro.`
+        : `Runs on ${info.model}, on this Mac's own Anthropic key.`)
     : info.reason;
   if (!info.ready) askEnabled(false);
   else {
