@@ -16,7 +16,12 @@ tunnel is configured.
     to us        {t:"req", id, method, path, query, headers, viewer:{email, account_id}, base, body}
     from us      {t:"res", id, status, headers, body, more?}   then   {t:"chunk", id, body, more?}
                  {t:"hello", name, version}   once, when the socket opens
-    to us        {t:"welcome", device, chunk_bytes, max_response_bytes, timeout_ms}
+    to us        {t:"welcome", device, chunk_bytes, max_response_bytes, timeout_ms, panel_url?}
+
+panel_url, when the service sends it, is where browsers reach this panel.
+It may be on a host of the service's own rather than on ACCOUNTS_URL, so
+that the panel's pages are never same-origin with the account pages; the
+address under ACCOUNTS_URL still works and hands over to it.
 
 Bodies are base64. A message may not exceed 1 MiB on the service's side,
 so a long answer is split at the chunk size the welcome frame names.
@@ -107,12 +112,66 @@ def _iso(ts: float | None = None) -> str:
 
 # --- Addresses ---------------------------------------------------------------
 
+# Where the service said, in its welcome frame, that each device's panel is
+# published. The service may serve panels from a host of its own rather than
+# from ACCOUNTS_URL (PANEL_ORIGIN in syllabus-accounts), so that a panel page
+# is never same-origin with the account pages; only the service knows which.
+_published: dict[str, str] = {}
+_published_lock = threading.Lock()
+
+
+def published_url(url, device_id: str) -> str:
+    """`url`, if it is a believable address for this device's panel, else "".
+
+    The address is shown on the Setup page and in `intake doctor`, so it has
+    to be a plain web address for exactly this device: https (http only when
+    the account service itself is plain http, which is local development),
+    no credentials, no query, and the path /p/<device>/. Which host is the
+    service's business.
+    """
+    if not isinstance(url, str) or not device_id or len(url) > 512:
+        return ""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    allowed = {"https"} | ({"http"} if account.url().startswith("http://") else set())
+    if parts.scheme not in allowed or not parts.hostname or "@" in parts.netloc:
+        return ""
+    if parts.query or parts.fragment or parts.path != PANEL_PREFIX + device_id + "/":
+        return ""
+    return url
+
+
+def _remember_published(device_id: str, url: str) -> None:
+    with _published_lock:
+        _published[device_id] = url
+
+
+def _told(device_id: str) -> str:
+    """What the service last said about this device, here or in the state file."""
+    with _published_lock:
+        told = _published.get(device_id, "")
+    if told:
+        return told
+    # `intake doctor` is another process; the running panel leaves it there.
+    state = read_state_file()
+    if state.get("device") == device_id:
+        return published_url(state.get("published_url"), device_id)
+    return ""
+
+
 def panel_url(acct: account.Account | None = None) -> str:
-    """Where this Mac's panel is published, or '' without an account."""
+    """Where this Mac's panel is published, or '' without an account.
+
+    The address the service named in its welcome frame when it named one,
+    and otherwise the one it has always been, under ACCOUNTS_URL. Both work:
+    the ACCOUNTS_URL address hands a signed-in owner over to the panel host.
+    """
     acct = acct if acct is not None else (account.load() if account.enabled() else None)
     if acct is None or not acct.device_id:
         return ""
-    return account.url() + PANEL_PREFIX + acct.device_id + "/"
+    return _told(acct.device_id) or account.url() + PANEL_PREFIX + acct.device_id + "/"
 
 
 def socket_url() -> str:
@@ -494,6 +553,7 @@ class Relay:
                 self.chunk_bytes = max(1024, int(frame.get("chunk_bytes") or DEFAULT_CHUNK_BYTES))
             except (TypeError, ValueError):
                 pass
+            self._welcomed(frame)
             return
         if kind != "req":
             return
@@ -503,6 +563,23 @@ class Relay:
             self._pool.submit(self._handle, frame)
         else:
             self._handle(frame)
+
+    def _welcomed(self, frame: dict) -> None:
+        """Take the panel's address from the welcome, if it names a good one."""
+        acct = account.load()
+        if acct is None or str(frame.get("device") or "") != acct.device_id:
+            return
+        told = published_url(frame.get("panel_url"), acct.device_id)
+        if not told:
+            return
+        before = panel_url(acct)
+        _remember_published(acct.device_id, told)
+        self._set(url=told, device=acct.device_id, published_url=told)
+        with self._lock:
+            snapshot = dict(self._state)
+        self._write_state(snapshot)
+        if told != before:
+            _say(f"the account service publishes this panel at {told}")
 
     def _handle(self, frame: dict) -> None:
         with self._lock:
