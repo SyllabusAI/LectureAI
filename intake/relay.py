@@ -62,6 +62,17 @@ RESPONSE_HEADERS = {"content-type", "cache-control", "etag", "last-modified", "l
 
 DEFAULT_CHUNK_BYTES = 256 * 1024
 PING_SECONDS = 30
+# Two keepalives, both at PING_SECONDS. run_forever(ping_interval=...) sends
+# WebSocket ping frames: the Cloudflare runtime answers those itself, which
+# lets this end notice a dead link, but they leave nothing the service's
+# Durable Object can read. So the panel also sends the text message HEARTBEAT,
+# which the object's auto-response answers with HEARTBEAT_REPLY without waking
+# and timestamps. Once a panel has sent one, the service treats 90 seconds
+# without one (PANEL_SILENCE_MS in syllabus-accounts src/panel-relay.ts) as a
+# dead socket. The body must be exactly this: the auto-response matches the
+# whole message. If the pace changes, change PANEL_SILENCE_MS with it.
+HEARTBEAT = "ping"
+HEARTBEAT_REPLY = "pong"
 # Reconnect pauses: doubled each failure, capped, with jitter, reset after a
 # connection that held for a while.
 MIN_BACKOFF = 1.0
@@ -202,8 +213,10 @@ class _RealSocket:
 class Relay:
     """The panel's end of the relay: one thread, one socket at a time."""
 
-    def __init__(self, app, socket_factory=_RealSocket, sleep=time.sleep, now=time.time):
+    def __init__(self, app, socket_factory=_RealSocket, sleep=time.sleep, now=time.time,
+                 heartbeat_seconds: float = PING_SECONDS):
         self.app = app
+        self._heartbeat_seconds = heartbeat_seconds
         self._factory = socket_factory
         self._sleep = sleep
         self._now = now
@@ -212,6 +225,9 @@ class Relay:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._socket = None
+        # Set when the current connection is over; wakes its heartbeat thread.
+        self._conn_done: threading.Event | None = None
+        self._heartbeat: threading.Thread | None = None
         self._pool: ThreadPoolExecutor | None = None
         self.chunk_bytes = DEFAULT_CHUNK_BYTES
         self._state = {"state": "off", "url": "", "since": "", "error": "", "detail": "",
@@ -270,6 +286,9 @@ class Relay:
     def stop(self) -> None:
         """Close the socket and end the thread."""
         self._stop.set()
+        done = self._conn_done
+        if done is not None:
+            done.set()
         self.disconnect()
         if self._pool is not None:
             self._pool.shutdown(wait=False)
@@ -340,6 +359,8 @@ class Relay:
         """One connection, start to finish. Returns why it ended."""
         outcome = {"reason": "the connection closed"}
         self._opened = False
+        done = threading.Event()
+        heartbeat: list[threading.Thread] = []
 
         def on_open() -> None:
             self._opened = True
@@ -355,6 +376,12 @@ class Relay:
                 _say(f"connected; this panel is at {panel_url(acct)}")
             self._failures = 0
             self._send({"t": "hello", "name": acct.device_name, "version": __version__})
+            if not heartbeat and not done.is_set():  # one per connection
+                t = threading.Thread(target=self._beat, args=(sock, done),
+                                     name="relay-heartbeat", daemon=True)
+                heartbeat.append(t)
+                self._heartbeat = t
+                t.start()
 
         def on_message(message) -> None:
             self._on_message(message)
@@ -397,15 +424,51 @@ class Relay:
             self._stop.set()
             return "cannot start"
         self._socket = sock
+        self._conn_done = done
         try:
             sock.run_forever()
         except Exception as exc:
             outcome["reason"] = f"{type(exc).__name__}: {exc}"
         finally:
             self._socket = None
+            done.set()
+            self._conn_done = None
+            for t in heartbeat:
+                # It wakes on `done`; a send stuck on a dead socket is the only
+                # thing that could hold it, and it is a daemon either way.
+                t.join(timeout=5)
+            self._heartbeat = None
         if self._state["state"] == "connected":
             _say(f"disconnected: {outcome['reason']}")
         return outcome["reason"]
+
+    def _beat(self, sock, done: threading.Event) -> None:
+        """Send the text heartbeat on this connection until it ends.
+
+        Holds _send_lock like every other send, so a beat is always a whole
+        message of its own. It can land between two chunks of an answer,
+        which is fine: chunks carry their id, and the service reads a bare
+        `ping` as the heartbeat, never as part of a frame.
+
+        A failed send ends the connection. The service stops trusting a
+        socket that goes 90 seconds without a beat, so one that cannot send
+        them is only waiting to be dropped; closing it now lets the loop reconnect
+        instead of waiting on the protocol ping to time out. It says so
+        once, not every tick.
+        """
+        while not done.wait(self._heartbeat_seconds):
+            if self._stop.is_set() or self._socket is not sock:
+                return
+            try:
+                with self._send_lock:
+                    sock.send(HEARTBEAT)
+            except Exception as exc:
+                _say(f"heartbeat stopped: could not send: {type(exc).__name__}: {exc}")
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                return
 
     # -- frames --
 
@@ -417,8 +480,8 @@ class Relay:
             sock.send(json.dumps(frame, separators=(",", ":")))
 
     def _on_message(self, message) -> None:
-        if isinstance(message, bytes):
-            return
+        if isinstance(message, bytes) or message == HEARTBEAT_REPLY:
+            return  # the service's answer to the heartbeat, nothing to do
         try:
             frame = json.loads(message)
         except ValueError:
