@@ -529,6 +529,42 @@ def t13():
 results.append(run("Google Calendar's own token is judged on its own scope", t13))
 
 
+def t13b():
+    reset()
+    disabled = {"error": {"code": 403, "message": "Google Calendar API has not been used in project 1 before or it is disabled.",
+                          "errors": [{"reason": "accessNotConfigured"}],
+                          "details": [{"reason": "SERVICE_DISABLED"}]}}
+
+    class Probe(FakeGoogle):
+        def __init__(self, status, body=None):
+            super().__init__()
+            self.answer = (status, body)
+
+        def request(self, method, url, json=None, timeout=None):
+            self.calls.append((method, url.removeprefix(calendars.GOOGLE_API), json))
+            return FakeResponse(*self.answer)
+
+    # Before the app has a calendar, the test still asks Google, and writes nothing.
+    fake = Probe(404, {"error": {"message": "Not Found"}})
+    state, detail = google_with(fake).test()
+    assert state == "granted" and "created with the first deadline" in detail, (state, detail)
+    assert fake.calls == [("GET", f"/calendars/{calendars.PROBE_CALENDAR}", None)], fake.calls
+
+    # A 403 that is not about the API being off is still an answering API.
+    state, _ = google_with(Probe(403, {"error": {"errors": [{"reason": "forbidden"}]}})).test()
+    assert state == "granted", state
+
+    # The Calendar API switched off for the project: said so, in Google's words.
+    state, detail = google_with(Probe(403, disabled)).test()
+    assert state == "error" and "has not been used in project" in detail, (state, detail)
+
+    # A sign-in Google no longer accepts.
+    state, _ = google_with(Probe(401, {"error": {"message": "Invalid Credentials"}})).test()
+    assert state == "error", state
+    assert not config.CALENDAR_LEDGER.exists(), "the test wrote a ledger"
+results.append(run("Google Calendar's test asks Google even before its calendar exists", t13b))
+
+
 # --- Apple, through AppleScript --------------------------------------------------------
 
 def t14():

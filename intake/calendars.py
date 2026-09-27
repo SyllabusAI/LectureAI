@@ -494,6 +494,8 @@ class AppleScriptBackend:
 
 GOOGLE_API = "https://www.googleapis.com/calendar/v3"
 GOOGLE_TIMEOUT = 30
+# A calendar id no one has: test() reads it to learn whether the API answers.
+PROBE_CALENDAR = "syllabus-probe@group.calendar.google.com"
 
 
 class GoogleBackend:
@@ -586,6 +588,21 @@ class GoogleBackend:
             message = (response.text or "")[:200]
         return f"Google Calendar returned {response.status_code}: {message or 'no detail'}"
 
+    @staticmethod
+    def _disabled(response) -> bool:
+        """Google's answer when the Calendar API is not enabled for the project."""
+        if response.status_code != 403:
+            return False
+        try:
+            error = response.json().get("error", {})
+        except ValueError:
+            return False
+        if not isinstance(error, dict):
+            return False
+        reasons = {e.get("reason") for e in error.get("errors") or [] if isinstance(e, dict)}
+        reasons |= {d.get("reason") for d in error.get("details") or [] if isinstance(d, dict)}
+        return bool(reasons & {"accessNotConfigured", "SERVICE_DISABLED"})
+
     def calendar_id(self, name: str, ledger: Ledger, fresh: bool = False) -> str:
         """The id of this app's calendar called `name`, created when missing.
 
@@ -641,7 +658,13 @@ class GoogleBackend:
         ledger = Ledger.load()
         known = ledger.calendars.get(f"google:{calendar_name(self.key)}")
         if not known:
-            self.credentials()
+            # Nothing of ours to read yet, so ask for a calendar that cannot exist.
+            # Its 404 proves the API answers for this project; a disabled API or a
+            # dead sign-in answers 403 or 401 instead, which the first real
+            # deadline would otherwise be the first to find out.
+            response = self._call("GET", f"/calendars/{PROBE_CALENDAR}")
+            if response.status_code == 401 or self._disabled(response):
+                return "error", self._problem(response)
             return "granted", (f"signed in; the {calendar_name(self.key)!r} calendar is "
                                f"created with the first deadline")
         response = self._call("GET", f"/calendars/{known}")
