@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from intake import account, config, google_client, tools
+from intake import account, config, consent, google_client, tools
 
 MIN_PYTHON = (3, 11)
 
@@ -222,6 +222,18 @@ def check_microphone() -> Check:
                      "intake setup and pick a microphone that is attached")
 
 
+def check_consent() -> Check:
+    """Whether this Mac may record at all. Required: the recorder refuses without it."""
+    on_file = consent.load()
+    if on_file is not None:
+        when = str(on_file.get("agreed_at", ""))[:10] or "a date not recorded"
+        return Check("permission to record", True, f"confirmed on {when}")
+    return Check("permission to record", False,
+                 "not confirmed yet, so recording is off",
+                 consent.fix_command(),
+                 fix_web=f"tick \"{consent.LABEL}\" in step 5 above and save")
+
+
 RETIRED_SIGNIN_KEYS = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET",
                        "PANEL_ALLOWED_EMAILS", "PANEL_PUBLIC_URL",
                        "PANEL_SECRET_KEY")
@@ -380,6 +392,7 @@ def run_checks() -> list[Check]:
         check_drive_token(),
         check_notion(),
         check_microphone(),
+        check_consent(),
     ]
     for extra in (check_web_signin(), check_account(), check_panel_web(), check_legacy(),
                   check_old_home()):

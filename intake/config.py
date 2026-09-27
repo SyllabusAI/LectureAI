@@ -161,6 +161,9 @@ def paths_for(profile: Profile, root: Path | None = None) -> dict[str, Path]:
         # it is read the same way, as a correction to it (see
         # cancellations.py).
         "CANCELED_FILE": home / "canceled.json",
+        # That the person confirmed they have permission to record, and when
+        # (see consent.py). No recording starts without it.
+        "CONSENT_FILE": home / "consent.json",
         # The id of the app's Drive root folder, cached so renaming or moving
         # the folder in Drive doesn't matter.
         "DRIVE_ROOT_CACHE": home / ".drive_root",
@@ -192,6 +195,7 @@ TOKEN_FILE: Path
 ACCOUNT_FILE: Path
 SCHEDULE_FILE: Path
 CANCELED_FILE: Path
+CONSENT_FILE: Path
 DRIVE_ROOT_CACHE: Path
 _install_paths(PROFILE)
 

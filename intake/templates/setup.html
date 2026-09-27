@@ -110,6 +110,9 @@
 
   .toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; cursor: pointer; }
   .toggle input { width: 18px; height: 18px; accent-color: var(--brand); margin: 0; }
+  /* A sentence, not a label: it wraps, so the box sits by its first line. */
+  .toggle.consent { align-items: flex-start; font-weight: 400; }
+  .toggle.consent input { flex: none; margin-top: 2px; }
 
   .status-line { display: flex; align-items: center; gap: 9px; font-size: 14px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
@@ -253,15 +256,27 @@
       </div>
     </div>
 
+    <!-- 5. Permission to record -->
+    <div class="card" id="consentCard">
+      <h2><span class="step">5</span> Permission to record</h2>
+      <p class="lead">
+        Recording people who have not agreed to it can break school or workplace
+        rules, and the law. Confirm this once; you are not asked again before
+        each recording.
+      </p>
+      <label class="toggle consent"><input type="checkbox" id="consent" required> <span id="consentText">I have permission to record.</span></label>
+      <div class="hint" id="consentHint">Required before this Mac can record.</div>
+    </div>
+
     <div class="save-bar">
       <button type="submit" class="btn primary" id="save">Save settings</button>
       <div class="hint" id="saveHint"></div>
     </div>
   </form>
 
-  <!-- 5. Drive -->
+  <!-- 6. Drive -->
   <div class="card">
-    <h2><span class="step">5</span> Google Drive</h2>
+    <h2><span class="step">6</span> Google Drive</h2>
     <p class="lead">
       Summaries are filed as Google Docs in a "Lecture Notes" folder in your own Drive.
       Connecting opens Google in a new tab; sign in and allow access. The app can only see
@@ -279,7 +294,7 @@
 
   <!-- Syllabus account -->
   <div class="card" id="accountCard" hidden>
-    <h2><span class="step">6</span> Syllabus account <span style="font-weight:400;letter-spacing:0;text-transform:none">(optional)</span></h2>
+    <h2><span class="step">7</span> Syllabus account <span style="font-weight:400;letter-spacing:0;text-transform:none">(optional)</span></h2>
     <p class="lead">
       Signing in ties this Mac to your Google identity, so later your class schedule and
       Drive connection can follow you to another Mac. Everything here works without it.
@@ -305,7 +320,7 @@
 
   <!-- Start at login -->
   <div class="card" id="loginCard">
-    <h2><span class="step">7</span> Keep it running</h2>
+    <h2><span class="step">8</span> Keep it running</h2>
     <p class="lead">
       Recording, transcribing, and your address on the web all need Syllabus to be
       running. Starting it when you log in means it is there for every class without
@@ -361,6 +376,7 @@ async function api(path, body) {
   if (!res.ok || data.ok === false) {
     const err = new Error(data.error || "request failed");
     err.row = data.row;
+    err.field = data.field;
     throw err;
   }
   return data;
@@ -454,8 +470,26 @@ function render(s) {
   $("notionToken").placeholder = s.notion.token_set ? "leave blank to keep the saved secret" : "ntn_...";
   $("notionDb").value = s.notion.database || "";
 
+  renderConsent(s.consent);
   renderDrive(s.drive);
-  $("done").style.display = (s.configured && (s.drive.connected || (s.drive.account && s.drive.account.connected))) ? "block" : "none";
+  $("done").style.display = (s.configured && (!s.consent || s.consent.given) && (s.drive.connected || (s.drive.account && s.drive.account.connected))) ? "block" : "none";
+}
+
+function renderConsent(c) {
+  // Once it is on file it stays ticked and cannot be unticked here: taking it
+  // back is not something a save should do by accident.
+  c = c || { given: false };
+  if (c.statement) $("consentText").textContent = c.statement;
+  $("consent").checked = !!c.given;
+  $("consent").disabled = !!c.given;
+  let when = "";
+  if (c.given && c.agreed_at) {
+    const d = new Date(c.agreed_at);
+    when = isNaN(d) ? "" : ` on ${d.toLocaleDateString()}`;
+  }
+  $("consentHint").textContent = c.given
+    ? `Confirmed${when}. This covers every recording on this Mac.`
+    : "Required before this Mac can record.";
 }
 
 function renderDrive(d) {
@@ -537,6 +571,11 @@ $("notionOn").onchange = () => { $("notionFields").hidden = !$("notionOn").check
 $("form").onsubmit = async (ev) => {
   ev.preventDefault();
   for (const tr of $("rows").querySelectorAll("tr")) tr.classList.remove("bad");
+  if (!$("consent").checked) {
+    flash("Tick \"I have permission to record\" before saving. It is required once, before this Mac can record.", true);
+    $("consent").focus();
+    return;
+  }
   $("save").disabled = true;
   $("saveHint").textContent = "Saving...";
   try {
@@ -551,6 +590,7 @@ $("form").onsubmit = async (ev) => {
         token: $("notionToken").value,
         database: $("notionDb").value,
       },
+      consent: $("consent").checked,
     });
     $("openai").value = ""; $("anthropic").value = ""; $("notionToken").value = "";
     flash(`Saved. ${out.classes} class meeting${out.classes === 1 ? "" : "s"} on the schedule.`);
@@ -561,6 +601,7 @@ $("form").onsubmit = async (ev) => {
     }
   } catch (e) {
     flash(e.message, true);
+    if (e.field === "consent") $("consent").focus();
     if (e.row) {
       const tr = $("rows").querySelectorAll("tr")[e.row - 1];
       if (tr) { tr.classList.add("bad"); tr.querySelector(".course").focus(); }
