@@ -563,6 +563,20 @@ def record_start():
                         "planned": _recorder.planned_name})
 
 
+def _record_consent() -> None:
+    """File the acknowledgment with where it really came from.
+
+    The same two pages answer on this Mac and through the relay, and the
+    record is the evidence of who agreed and how, so a yes given from a phone
+    through the account service says so, and names the viewer the service
+    vouched for, rather than reading as though someone clicked it here.
+    """
+    if g.get("relayed"):
+        consent.record("web", by=g.get("viewer", ""))
+    else:
+        consent.record("panel")
+
+
 @app.post("/api/consent")
 def consent_give():
     """Record that the person has permission to record. Asked once per profile.
@@ -575,7 +589,7 @@ def consent_give():
         return jsonify({"ok": False, "error": "tick the box to confirm you have "
                         "permission to record"}), 400
     config.ensure_home()
-    consent.record("panel")
+    _record_consent()
     return jsonify({"ok": True, **consent.summary()})
 
 
@@ -906,7 +920,7 @@ def setup_save():
         # The file is written whole or not at all, so nothing was saved.
         return jsonify({"ok": False, "error": str(exc)}), 400
     if agreed and not consent.given():
-        consent.record("panel")
+        _record_consent()
     config.write_schedule(meetings, tolerance)
     config.reload()
     # The account's copy follows the file, when this Mac is signed in.

@@ -75,11 +75,14 @@ def given(home: Path | None = None) -> bool:
     return load(home) is not None
 
 
-def record(source: str, home: Path | None = None) -> dict:
+def record(source: str, home: Path | None = None, by: str = "") -> dict:
     """Write the acknowledgment and return what was written.
 
     `source` is where it was given: "setup" for `intake setup`, "panel" for
-    the Setup page or the dashboard.
+    the Setup page or the dashboard on this Mac, "web" for the same pages
+    reached through the account service's relay. `by` is who the relay
+    named as the viewer, when it was the relay; this Mac has no way to know
+    who is at its own keyboard, so it does not pretend to.
     """
     data = {
         "agreed": True,
@@ -89,6 +92,8 @@ def record(source: str, home: Path | None = None) -> dict:
         "app_version": __version__,
         "source": source,
     }
+    if by:
+        data["by"] = by
     config.write_private(path(home), json.dumps(data, indent=2) + "\n")
     return data
 
