@@ -3,12 +3,11 @@
 **What's new**
 
 - Assignments go where you already look. Alongside Notion, due dates from your lectures can now land in Apple Calendar, Apple Reminders, and Google Calendar. Turn each one on from the Setup page.
-- Syllabus asks you once to confirm you have permission to record before your first recording.
+- Syllabus asks you once to confirm you have permission to record. If you are updating, it asks the first time you press Record or save the Setup page: tick the box, confirm, then press Record again. Do it before your next class so no lecture starts late.
 - A lecture that fails partway through transcribing picks up where it stopped and is not charged twice for the parts already done.
 - The panel log trims itself, so it no longer grows without limit.
-- The web panel notices a Mac that has gone quiet and says so right away instead of waiting.
+- When your Mac goes offline, the web panel shows it as not connected within about a minute and a half, and stops leaving you waiting on requests that cannot arrive.
 - Signed in with a Pro account, the study assistant works with no Anthropic key of your own. Follow-up questions stay in the same session.
-- The web panel can open from an address of its own, kept separate from your account pages.
 
 Download `{{dmg}}`, open it, and drag Syllabus to Applications. Open Syllabus from Applications and it starts on its Setup page: sign in to your Syllabus account, pick a microphone, enter your class schedule, and connect Google Drive. A signed-in Mac holds no API key of its own, because transcription and summaries are billed to the account. Without an account, paste two keys of your own instead, one from OpenAI and one from Anthropic. Nothing else to install.
 
