@@ -2,7 +2,7 @@
 
 **What's new**
 
-- Assignments go where you already look. Alongside Notion, due dates from your lectures can now land in Apple Calendar, Apple Reminders, and Google Calendar. Turn each one on from the Setup page.
+- Assignments go where you already look. Alongside Notion, due dates from your lectures can now land in Apple Calendar and Apple Reminders. Turn each one on from the Setup page. Google Calendar is there too as an early preview; it files into a calendar of its own that Syllabus creates in your Google account.
 - Syllabus asks you once to confirm you have permission to record. If you are updating, it asks the first time you press Record or save the Setup page: tick the box, confirm, then press Record again. Do it before your next class so no lecture starts late.
 - A lecture that fails partway through transcribing picks up where it stopped and is not charged twice for the parts already done.
 - The panel log trims itself, so it no longer grows without limit.
