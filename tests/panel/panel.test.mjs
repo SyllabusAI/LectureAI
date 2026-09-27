@@ -40,6 +40,7 @@ function setupRoutes(extra = {}) {
     "/api/doctor": like("/api/doctor"),
     "/api/account": like("/api/account"),
     "/api/login-item": like("/api/login-item"),
+    "/api/calendar": like("/api/calendar"),
     ...extra,
   };
 }
@@ -327,6 +328,92 @@ await run("a fix the form cannot carry out is not rewritten into one it can", as
   assert(!/fill in the section above and save/.test(shown),
     `the page told the user to save, which moves nothing: ${shown.trim()}`);
   assert(/move them into/.test(shown), `the real instruction was dropped: ${shown.trim()}`);
+  await page.close();
+});
+
+// --- Calendars --------------------------------------------------------------
+
+/** The calendar payload with one destination's fields replaced. */
+function calendarsWith(key, changes) {
+  const out = like("/api/calendar");
+  out.destinations = out.destinations.map((d) => (d.key === key ? { ...d, ...changes } : d));
+  return out;
+}
+
+await run("each calendar is drawn with its state, and none is labeled not ready", async () => {
+  const page = loadPage(DIR, "setup.html", {
+    routes: setupRoutes({
+      "/api/calendar": calendarsWith("apple_reminders", {
+        enabled: true, state: "denied", detail: "Syllabus is not allowed to use Reminders.",
+      }),
+    }),
+  });
+  await page.window.loadCalendars();
+  await page.settle();
+  const rows = [...page.$("calendars").querySelectorAll(".cal")];
+  equal(rows.map((r) => r.dataset.key), ["apple_calendar", "apple_reminders", "google_calendar"],
+    "the three calendars were not all drawn, in order");
+  const reminders = rows[1];
+  assert(reminders.querySelector(".calOn").checked, "an enabled calendar showed as off");
+  equal(reminders.querySelector(".dot").className, "dot bad", "denied access did not read as a problem");
+  assert(/not allowed/.test(reminders.querySelector(".calText").textContent),
+    "the reason access is missing was not shown");
+  assert(!rows.some((r) => r.querySelector(".preview")), "a calendar was labeled not ready");
+  equal(rows[0].querySelector(".calName").value, like("/api/calendar").destinations[0].name,
+    "the calendar name was not filled in");
+  await page.close();
+});
+
+await run("switching a calendar on asks the route, and a refusal is shown", async () => {
+  const posted = [];
+  const page = loadPage(DIR, "setup.html", {
+    routes: setupRoutes({
+      "/api/calendar": (body) => {
+        if (body === undefined) return like("/api/calendar");
+        posted.push(body);
+        return { __status: 400, ok: false, error: "Syllabus is not allowed to use Calendars." };
+      },
+    }),
+  });
+  await page.window.loadCalendars();
+  await page.settle();
+  const box = page.$("calendars").querySelector('[data-key="apple_calendar"] .calOn');
+  box.checked = true;
+  box.dispatchEvent(new page.window.Event("change"));
+  await page.settle();
+  equal(posted, [{ destination: "apple_calendar", enabled: true }], "the toggle sent the wrong request");
+  assert(/not allowed/.test(page.$("flash").textContent), "the refusal was not shown");
+  // Redrawn from the route afterward, so the box goes back to what is saved.
+  const again = page.$("calendars").querySelector('[data-key="apple_calendar"] .calOn');
+  equal(again.checked, false, "a refused calendar still looks switched on");
+  await page.close();
+});
+
+await run("Google's sign-in is watched until it finishes", async () => {
+  let running = true;
+  const page = loadPage(DIR, "setup.html", {
+    routes: setupRoutes({
+      "/api/calendar": (body) => {
+        if (body !== undefined) return { ok: true, connecting: true };
+        const out = like("/api/calendar");
+        out.connecting = { running, error: "" };
+        return out;
+      },
+    }),
+  });
+  await page.window.loadCalendars();
+  await page.settle();
+  const box = page.$("calendars").querySelector('[data-key="google_calendar"] .calOn');
+  box.checked = true;
+  box.dispatchEvent(new page.window.Event("change"));
+  await page.settle();
+  assert(page.timers.some((t) => t.kind === "interval"), "nothing is watching the sign-in");
+  assert(/signing in to Google/.test(page.$("calendars").textContent),
+    "the page does not say it is waiting on the browser");
+  running = false;
+  await page.fire();
+  assert(/Google Calendar connected/.test(page.$("flash").textContent),
+    "a finished sign-in was not announced");
   await page.close();
 });
 

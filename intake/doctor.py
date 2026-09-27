@@ -200,6 +200,37 @@ def check_notion() -> Check:
                  required=False)
 
 
+def check_calendars() -> list[Check]:
+    """One line per calendar that is switched on. Nothing when none is.
+
+    Local only, like everything here: macOS's permission is read without
+    asking for it, and Google Calendar's token is read from disk, never
+    tried against Google. The Setup page's Test button does that.
+    """
+    from intake import calendars
+    checks = []
+    for key in calendars.KEYS:
+        if not calendars.enabled(key):
+            continue
+        info = calendars.describe(key)
+        label = info["label"]
+        where = f"into {info['name']!r}"
+        if info["state"] == "granted":
+            checks.append(Check(label, True, f"{where}, {info['detail']}",
+                                required=False))
+        elif info["state"] == "unknown":
+            checks.append(Check(label, True, f"{where}; {info['detail']}",
+                                required=False))
+        else:
+            word = "google" if key == calendars.GOOGLE else (
+                "reminders" if key == calendars.REMINDERS else "apple")
+            checks.append(Check(
+                label, False, f"{where}, but {info['detail']}",
+                f"intake calendar --connect {word}", required=False,
+                fix_web=f"switch {label} off and on again in Setup to connect it"))
+    return checks
+
+
 def check_microphone() -> Check:
     if tools.find("ffmpeg") is None:
         return Check("microphone", False, "cannot check without ffmpeg",
@@ -391,6 +422,7 @@ def run_checks() -> list[Check]:
         check_drive_client(),
         check_drive_token(),
         check_notion(),
+        *check_calendars(),
         check_microphone(),
         check_consent(),
     ]

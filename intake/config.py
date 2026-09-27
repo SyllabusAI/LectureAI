@@ -167,6 +167,14 @@ def paths_for(profile: Profile, root: Path | None = None) -> dict[str, Path]:
         # The id of the app's Drive root folder, cached so renaming or moving
         # the folder in Drive doesn't matter.
         "DRIVE_ROOT_CACHE": home / ".drive_root",
+        # Google Calendar's own token, kept apart from token.json on purpose:
+        # the Drive token's scope check (doctor, upload) must never see a
+        # calendar scope, and turning Google Calendar off must never cost
+        # the Drive connection. See calendars.py.
+        "CALENDAR_TOKEN_FILE": home / "calendar_token.json",
+        # Which to-dos already went to which calendar, so a lecture that is
+        # processed again never files the same deadline twice.
+        "CALENDAR_LEDGER": home / "calendar_items.json",
     }
 
 
@@ -197,6 +205,8 @@ SCHEDULE_FILE: Path
 CANCELED_FILE: Path
 CONSENT_FILE: Path
 DRIVE_ROOT_CACHE: Path
+CALENDAR_TOKEN_FILE: Path
+CALENDAR_LEDGER: Path
 _install_paths(PROFILE)
 
 
@@ -287,6 +297,14 @@ def env_defaults(profile: Profile) -> dict[str, str]:
         "RECORD_DEVICE": "MacBook Pro Microphone",
         "ACCOUNTS_URL": "https://syllabusaccounts.maincoursemedia.com",
         "DRIVE_SOURCE": "auto",
+        # Calendars (calendars.py). Each one is off unless switched on, and
+        # each files into a calendar named after the profile by default.
+        "APPLE_CALENDAR": "",
+        "APPLE_CALENDAR_NAME": profile.title,
+        "APPLE_REMINDERS": "",
+        "APPLE_REMINDERS_LIST": profile.title,
+        "GOOGLE_CALENDAR": "",
+        "GOOGLE_CALENDAR_NAME": profile.title,
     }
 
 
@@ -550,6 +568,25 @@ NOTION_PROP_DUE = _setting("NOTION_PROP_DUE")
 NOTION_PROP_COURSE = _setting("NOTION_PROP_COURSE")
 NOTION_PROP_KIND = _setting("NOTION_PROP_KIND")
 NOTION_PROP_SOURCE = _setting("NOTION_PROP_SOURCE")
+
+# --- Calendars (calendars.py) ------------------------------------------------
+
+# Each is "on" or blank. Apple Calendar and Apple Reminders go through
+# EventKit on this Mac; Google Calendar through the Calendar API with a token
+# of its own (CALENDAR_TOKEN_FILE). All three are optional and independent of
+# Notion and of each other. The names are the calendar or list each files
+# into, created on first use; the default is the profile's name.
+APPLE_CALENDAR = _setting("APPLE_CALENDAR")
+APPLE_CALENDAR_NAME = _setting("APPLE_CALENDAR_NAME")
+APPLE_REMINDERS = _setting("APPLE_REMINDERS")
+APPLE_REMINDERS_LIST = _setting("APPLE_REMINDERS_LIST")
+GOOGLE_CALENDAR = _setting("GOOGLE_CALENDAR")
+GOOGLE_CALENDAR_NAME = _setting("GOOGLE_CALENDAR_NAME")
+
+# The one scope Google Calendar asks for. It reaches only calendars this app
+# created itself, the way drive.file reaches only files it created, which is
+# why Syllabus files into a calendar of its own rather than your main one.
+CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.app.created"]
 
 # --- Recording (record.py) ------------------------------------------------
 

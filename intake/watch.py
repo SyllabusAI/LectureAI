@@ -26,7 +26,7 @@ from watchdog.observers import Observer
 
 from intake import account
 from intake import config
-from intake import notion_tasks
+from intake import destinations
 from intake import providers
 from intake import summarize
 from intake import transcribe
@@ -357,30 +357,19 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     # Both uploads landed, so there is nothing left to resume.
     saved.done()
 
-    # Notion comes last and never raises. The lecture is already safe in Drive
-    # by this point, so a Notion outage or a misconfigured database must not
-    # cost the recording, and the tasks are recoverable from the summary Doc.
-    notion_result = None
-    notion_warning = ""
-    if notion_tasks.enabled():
-        status("notion", f"{len(result['action_items'])} action items")
-        try:
-            notion_result = notion_tasks.push(
-                result["action_items"], course, source_url=md_url
-            )
-            log(f"  notion: {notion_result['added']} added, "
-                f"{notion_result['skipped']} already there, "
-                f"{notion_result['failed']} failed")
-            notion_warning = notion_tasks.outcome_warning(
-                notion_result, len(result["action_items"]))
-        except Exception as exc:
-            log(f"  notion: skipped ({exc})")
-            notion_warning = f"Notion was not reached: {exc}"
-        # Recorded with the lecture, not just logged to stderr: a dropped
-        # to-do is silent otherwise, and the panel is where it gets noticed.
-        notion_warning = " ".join(notion_warning.split())[:300]
-    elif result["action_items"]:
-        log(f"  {len(result['action_items'])} action items (Notion not configured)")
+    # The to-do destinations come last and never raise: Notion, then any
+    # calendar that is switched on (destinations.py). The lecture is already
+    # safe in Drive by this point, so an outage or a misconfiguration must
+    # not cost the recording, and the tasks are recoverable from the summary
+    # Doc. One destination failing never stops the next.
+    filed = destinations.file_all(
+        result["action_items"], course, source_url=md_url, lecture=rec_key,
+        status=status, log=log)
+    # Recorded with the lecture, not just logged to stderr: a dropped to-do is
+    # silent otherwise, and the panel is where it gets noticed. With only
+    # Notion on this is exactly the line it always was.
+    notion_warning = filed["warnings"].get("notion", "")
+    warning = filed["warning"]
 
     if config.DELETE_ORIGINAL_AFTER_UPLOAD:
         path.unlink()
@@ -399,10 +388,11 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     # picked for it has nothing left to answer.
     config.forget_course(path)
 
-    # Fields six and seven: what did not reach Notion (blank when everything
-    # did), then a small JSON object of measurements the panel's dashboard
-    # reads: how much audio the lecture held, how many words the transcript
-    # ran to, how many to-dos and key terms came out of it. Lines written
+    # Fields six and seven: what did not reach Notion or a calendar (blank
+    # when everything did; one line per destination, joined), then a small
+    # JSON object of measurements the panel's dashboard reads: how much audio
+    # the lecture held, how many words the transcript ran to, how many to-dos
+    # and key terms came out of it. Lines written
     # before either field existed have five (or six) fields and are read
     # exactly as before; they simply have nothing measured.
     measures = {
@@ -411,7 +401,7 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
         "actions": len(result.get("action_items") or []),
         "terms": len(result.get("key_terms") or []),
     }
-    write_log_line(course, path.name, final_stem, md_url, notion_warning,
+    write_log_line(course, path.name, final_stem, md_url, warning,
                    json.dumps(measures, separators=(",", ":")))
     log(f"  done: {final_stem}")
     log(f"  summary:    {md_url}")
@@ -421,6 +411,7 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
         "course": course, "date": date, "stem": final_stem,
         "summary_url": md_url, "transcript_url": txt_url,
         "original": original, "notion_warning": notion_warning,
+        "warning": warning, "destinations": filed["outcomes"],
     }
 
 
