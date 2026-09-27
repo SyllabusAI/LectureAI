@@ -200,6 +200,17 @@ class Resume:
         # discard the whole transcript with it.
         return self._write("transcript.txt", text)
 
+    def chunks_dir(self) -> Path:
+        """Where each chunk's transcript waits until the whole one is saved.
+
+        A slot written before this existed simply has no such folder, and
+        transcribes from the start exactly as it used to.
+        """
+        return self.dir / "chunks"
+
+    def clear_chunks(self) -> None:
+        shutil.rmtree(self.chunks_dir(), ignore_errors=True)
+
     def transcript_path(self) -> Path:
         """The transcript on disk, which is the file the upload sends."""
         return self.dir / "transcript.txt"
@@ -292,9 +303,13 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     status("transcribing", "starting")
     transcript = saved.transcript()
     if transcript is None:
+        # Each chunk is kept as it lands, so a failure on the fifth of six
+        # does not bill the first four again on the retry.
         transcript = transcribe.transcribe(
-            path, on_progress=lambda detail: status("transcribing", detail))
+            path, on_progress=lambda detail: status("transcribing", detail),
+            checkpoint=saved.chunks_dir())
         saved.save_transcript(transcript)
+        saved.clear_chunks()
     else:
         log(f"  reusing the transcript an earlier attempt paid for "
             f"({len(transcript.split()):,} words)")

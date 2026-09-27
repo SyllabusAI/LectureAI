@@ -19,7 +19,7 @@ HOME = fresh_home()  # before config is imported
 
 from flask import Flask, jsonify, request  # noqa: E402
 
-from intake import account, config, gui, relay  # noqa: E402
+from intake import account, config, consent, gui, relay  # noqa: E402
 
 
 def run(label, fn):
@@ -205,6 +205,38 @@ def t7():
         res = client.get("/api/status", headers={"Intake-Relay": "1", "Intake-Viewer": "me@example.com"})
         assert res.get_json()["signed_in_as"] == ""
 results.append(run("a local request is untouched: no viewer, no base path, no relay", t7))
+
+
+def t7b():
+    # Permission to record given through the relay is filed as given on the
+    # web, by the viewer the service named, not as a click on this Mac; and a
+    # viewer who does not own the account cannot give it at all.
+    account.save(ME)
+    try:
+        config.CONSENT_FILE.unlink(missing_ok=True)
+        yes = json.dumps({"agree": True})
+        json_type = {"Content-Type": "application/json"}
+        wrong = relay.serve(gui.app, req("/api/consent", method="POST", body=yes, headers=json_type,
+                                         viewer={"email": "x@example.com", "account_id": "a2"}))
+        assert wrong[0]["status"] == 403, wrong[0]
+        assert not consent.given(), "a viewer who does not own this Mac gave permission for it"
+
+        frames = relay.serve(gui.app, req("/api/consent", method="POST", body=yes, headers=json_type))
+        assert frames[0]["status"] == 200, (frames[0], unb64(frames))
+        data = consent.load()
+        assert data is not None, "the owner's yes was not filed"
+        assert data["source"] == "web" and data["by"] == "me@example.com", data
+
+        # The same yes on this Mac says so, and names nobody.
+        config.CONSENT_FILE.unlink()
+        with gui.app.test_client() as client:
+            assert client.post("/api/consent", json={"agree": True}).status_code == 200
+        data = consent.load()
+        assert data["source"] == "panel" and "by" not in data, data
+    finally:
+        config.CONSENT_FILE.unlink(missing_ok=True)
+        account.forget()
+results.append(run("permission to record given through the relay says so, and only the owner can give it", t7b))
 
 
 # --- The loop that keeps the socket open -----------------------------------------------

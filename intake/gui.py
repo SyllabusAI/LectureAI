@@ -35,8 +35,8 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 
-from intake import account, assistant, cancellations, config, doctor, insights, relay, service, setup_wizard
-from intake import signin, sync
+from intake import account, assistant, cancellations, config, consent, doctor, insights, relay, service, setup_wizard
+from intake import logfiles, signin, sync
 from intake import updates
 from intake import notion_tasks
 from intake import record as recording
@@ -434,6 +434,9 @@ def status():
             "stalled": rec.stalled if active else False,
             "warning": rec.warning if active else "",
         },
+        # Whether this Mac may start a recording at all (consent.py). The
+        # record card asks for it when it is missing.
+        "consent": consent.summary(),
         "watcher": {"running": pid is not None, "pid": pid},
         "processing": _processing(pid),
         "inbox": _inbox(),
@@ -546,11 +549,48 @@ def record_start():
         try:
             _recorder = recording.Recorder(course=course)
             _recorder.start()
+        except consent.ConsentRequired:
+            # Its own status and flag, so the page can show the checkbox
+            # rather than a bare error. 403: nothing is wrong with the
+            # request, this Mac is not yet allowed to make it.
+            _recorder = None
+            return jsonify({"ok": False, "error": consent.panel_refusal(),
+                            "consent_required": True}), 403
         except Exception as exc:
             _recorder = None
             return jsonify({"ok": False, "error": str(exc)}), 500
         return jsonify({"ok": True, "device": _recorder.device_name,
                         "planned": _recorder.planned_name})
+
+
+def _record_consent() -> None:
+    """File the acknowledgment with where it really came from.
+
+    The same two pages answer on this Mac and through the relay, and the
+    record is the evidence of who agreed and how, so a yes given from a phone
+    through the account service says so, and names the viewer the service
+    vouched for, rather than reading as though someone clicked it here.
+    """
+    if g.get("relayed"):
+        consent.record("web", by=g.get("viewer", ""))
+    else:
+        consent.record("panel")
+
+
+@app.post("/api/consent")
+def consent_give():
+    """Record that the person has permission to record. Asked once per profile.
+
+    Only an explicit `agree: true` counts. There is no way to take it back
+    from here; deleting consent.json from the home does that.
+    """
+    payload = _body()
+    if payload.get("agree") is not True:
+        return jsonify({"ok": False, "error": "tick the box to confirm you have "
+                        "permission to record"}), 400
+    config.ensure_home()
+    _record_consent()
+    return jsonify({"ok": True, **consent.summary()})
 
 
 @app.post("/api/record/stop")
@@ -771,6 +811,7 @@ def setup_state():
             "account": _drive_account_state(),
         },
         "configured": _configured(),
+        "consent": consent.summary(),
     })
 
 
@@ -864,12 +905,22 @@ def setup_save():
             return jsonify({"ok": False, "error": "Notion needs both the integration "
                             "secret and the database URL, or untick it to skip"}), 400
 
+    # The permission box is required, once. After it is on file the page
+    # shows it ticked and a save that leaves it out is fine.
+    agreed = payload.get("consent") is True
+    if not agreed and not consent.given():
+        return jsonify({"ok": False, "field": "consent",
+                        "error": f"tick \"{consent.LABEL}\" to confirm you have "
+                                 f"permission to record, then save"}), 400
+
     config.ensure_home()
     try:
         setup_wizard.write_env(config.ENV_FILE, values, notion_skipped=skipped)
     except setup_wizard.UnsafeSetting as exc:
         # The file is written whole or not at all, so nothing was saved.
         return jsonify({"ok": False, "error": str(exc)}), 400
+    if agreed and not consent.given():
+        _record_consent()
     config.write_schedule(meetings, tolerance)
     config.reload()
     # The account's copy follows the file, when this Mac is signed in.
@@ -1126,6 +1177,10 @@ def prepare(host: str, port: int) -> str:
     server from a thread so its window can have the main one.
     """
     url = start_url(host, port)
+    # Before the first line of this run is written, so it starts the fresh
+    # file rather than ending the old one. launchd appends this process's
+    # stdout and stderr to panel.log and nothing else ever trims it.
+    logfiles.keep_trimmed(config.HOME_DIR / "panel.log")
     print(f"{config.PROFILE.title} control panel:  {url}", file=sys.stderr, flush=True)
     needs = _setup_needs()
     if needs:

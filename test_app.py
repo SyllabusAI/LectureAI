@@ -196,6 +196,17 @@ def test_menu_items():
     items = app.menu_items({**newer, "update": {**newer["update"], "how": "pipx"}}, attached=False, login_installed=False)
     assert not any(i["action"] == "update" for i in items), "pipx installs are told on the page instead"
 
+    # No permission to record on file: the recorder would refuse, so the menu
+    # opens the dashboard, where the question is, instead of failing quietly.
+    unconfirmed = {**idle, "consent": {"given": False}}
+    items = app.menu_items(unconfirmed, attached=False, login_installed=False)
+    assert "Confirm Permission to Record…" in titles(items), titles(items)
+    assert not any(i["action"] == "record_start" for i in items), titles(items)
+    confirm = next(i for i in items if i["title"] == "Confirm Permission to Record…")
+    assert confirm["action"] == "open" and confirm["enabled"] is True, confirm
+    items = app.menu_items({**idle, "consent": {"given": True}}, attached=False, login_installed=False)
+    assert "Record ACCT-4321" in titles(items), titles(items)
+
     # The panel is gone: say so, and do not offer to record.
     items = app.menu_items(None, attached=False, login_installed=False)
     assert "The panel is not answering" in titles(items)

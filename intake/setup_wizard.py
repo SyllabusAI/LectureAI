@@ -1,7 +1,8 @@
 """`intake setup`: the interactive first run.
 
-Asks for the two API keys, the microphone, the class schedule, and optionally
-Notion, then writes .env and schedule.toml into the home directory. Never
+Asks for the two API keys, the microphone, the class schedule, optionally
+Notion, and once, whether the person has permission to record, then writes
+.env, schedule.toml and consent.json into the home directory. Never
 touches the code directory. Run it again and it shows what is there, so one
 value can be changed without retyping the rest.
 
@@ -383,6 +384,50 @@ class Wizard:
             return True
         return False
 
+    def ask_consent(self) -> bool | None:
+        """Ask once whether the person has permission to record.
+
+        Returns True for a yes that still has to be written, False for a no,
+        and None when it is already on file and nothing was asked. Only an
+        explicit yes counts; Enter is a no, because agreeing to this by
+        accident is the one answer that must not happen.
+        """
+        from intake import consent
+
+        self.say("")
+        on_file = consent.load(self.home)
+        if on_file is not None:
+            when = str(on_file.get("agreed_at", ""))[:10]
+            self.say(f"Permission to record: confirmed{f' on {when}' if when else ''}.")
+            return None
+        self.say("Permission to record. Before this Mac records anything, confirm this:")
+        self.say(f"  {consent.statement()}")
+        try:
+            answer = self.ask("Do you have that permission? [y/N] ")
+        except EOFError:
+            answer = ""
+        if _yes(answer, default=False):
+            return True
+        self.say(f"  Not confirmed. Recording stays off until you run  "
+                 f"{consent.fix_command()}  and answer yes.")
+        return False
+
+    def write_consent(self, agreed: bool | None) -> None:
+        if agreed:
+            from intake import consent
+            consent.record("setup", home=self.home)
+            self.say(f"Wrote {consent.path(self.home)}")
+
+    def run_consent_only(self) -> int:
+        """`intake setup --consent`: only the permission question."""
+        self.say(f"{config.PROFILE.title} setup. Settings go in {self.home}")
+        agreed = self.ask_consent()
+        if agreed:
+            self.home.mkdir(parents=True, exist_ok=True)
+            self.write_consent(agreed)
+            self.say("You can record now:  intake record")
+        return 1 if agreed is False else 0
+
     def offer_login(self) -> None:
         if not self.allow_login:
             return
@@ -422,6 +467,7 @@ class Wizard:
         self.ask_microphone(values)
         meetings, tolerance = self.ask_schedule()
         notion_skipped = self.ask_notion(values)
+        agreed = self.ask_consent()
 
         self.home.mkdir(parents=True, exist_ok=True)
         for sub in ("inbox", "processed", ".work"):
@@ -436,6 +482,7 @@ class Wizard:
         self.say(f"Wrote {self.env_file}")
         if meetings:
             self.say(f"Wrote {self.schedule_file} ({len(meetings)} class meetings)")
+        self.write_consent(agreed)
 
         self.offer_login()
 
@@ -452,9 +499,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--no-login", action="store_true",
                         help="do not offer to authorize Google Drive at the end")
+    parser.add_argument("--consent", action="store_true",
+                        help="only confirm that you have permission to record")
     args = parser.parse_args(argv)
     try:
-        return Wizard(allow_login=not args.no_login).run()
+        wizard = Wizard(allow_login=not args.no_login)
+        return wizard.run_consent_only() if args.consent else wizard.run()
     except KeyboardInterrupt:
         print("\nsetup canceled; nothing was changed unless a 'Wrote' line "
               "appeared above", file=sys.stderr)

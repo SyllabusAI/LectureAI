@@ -563,6 +563,20 @@
   .flash code { font-size: 12px; }
   /* The same banner, sat above the record button instead of the page. */
   .flash.rec-flash { margin: 0 0 14px; border-radius: 12px; }
+  /* Permission to record, asked once before the first recording. Its own
+     block rather than a .flash, which hides itself by default. */
+  .consent-box {
+    margin: 0 0 14px; padding: 12px 16px; border-radius: 12px; font-size: 13px;
+    background: rgba(178,92,0,.1); color: var(--warn);
+  }
+  .consent-box label { display: flex; gap: 10px; align-items: flex-start; color: var(--ink); cursor: pointer; }
+  .consent-box input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--brand); }
+  .consent-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+  .consent-foot button {
+    font: inherit; font-size: 12.5px; font-weight: 500; border: none; border-radius: 999px; padding: 7px 16px;
+    background: var(--brand); color: #fff; cursor: pointer;
+  }
+  .consent-foot button:disabled { opacity: .45; cursor: not-allowed; }
 
   /* Phones. Last on purpose: these override the rules above. ------------- */
   @media (max-width: 560px) {
@@ -677,6 +691,13 @@
     <section class="grid top-row">
       <div class="card record-card">
         <div class="flash rec-flash" id="allowanceFlash" style="display:none"></div>
+        <div class="consent-box" id="consentBox" hidden>
+          <label><input type="checkbox" id="consentCheck"> <span id="consentText">I have permission to record.</span></label>
+          <div class="consent-foot">
+            <span>Asked once, before this Mac's first recording.</span>
+            <button type="button" id="consentBtn">Confirm</button>
+          </div>
+        </div>
         <div class="record">
           <div class="rec-btn-wrap">
             <button class="rec-btn" id="recBtn" aria-label="Start recording">
@@ -899,6 +920,8 @@ async function api(path, body) {
     const err = new Error(data.error || "request failed");
     // The relay answers for the Mac when the Mac is not there.
     err.notConnected = res.status === 503 && data.relay === "not-connected";
+    // The recorder refused because permission to record is not on file yet.
+    err.consentRequired = data.consent_required === true;
     throw err;
   }
   return data;
@@ -1017,7 +1040,44 @@ function renderAllowance(a) {
   el.style.display = "block";
 }
 
+// Permission to record ----------------------------------------------------
+// The recorder refuses to start until this Mac has it on file, so the record
+// card asks for it right where recording starts. The words come from the
+// panel, which is the one place they are written down.
+function renderConsent(s) {
+  const c = s.consent || { given: true };
+  const box = $("consentBox");
+  box.hidden = !!c.given || (s.recording && s.recording.active);
+  if (c.statement) $("consentText").textContent = c.statement;
+}
+
+function askForConsent() {
+  $("consentBox").hidden = false;
+  $("consentCheck").focus();
+}
+
+$("consentBtn").onclick = async () => {
+  if (!$("consentCheck").checked) {
+    flash("Tick the box first to confirm you have permission to record.", true);
+    $("consentCheck").focus();
+    return;
+  }
+  $("consentBtn").disabled = true;
+  try {
+    await api("/api/consent", { agree: true });
+    $("consentBox").hidden = true;
+    if (state) state.consent = { ...(state.consent || {}), given: true };
+    flash("Thanks. You can record now.");
+  } catch (e) {
+    flash(e.message, true);
+  } finally {
+    $("consentBtn").disabled = false;
+    poll();
+  }
+};
+
 function renderRecord(s) {
+  renderConsent(s);
   const r = s.recording;
   const btn = $("recBtn");
   btn.classList.toggle("is-recording", r.active);
@@ -1696,12 +1756,17 @@ $("recBtn").onclick = async () => {
         ? ` ${out.lost}s was lost while the mic opened.`
         : "";
       flash(`Saved ${out.name} · ${hhmmss(out.seconds)} of audio, ${fileSize(out.bytes)}. ${next}${lost}`);
+    } else if (state && state.consent && !state.consent.given) {
+      // The recorder would refuse; say why here and show the box instead.
+      askForConsent();
+      flash("Before your first recording, confirm that you have permission to record.", true);
     } else {
       const course = $("courseSel").value;
       const out = await api("/api/record/start", { course });
       flash(`Recording from ${out.device} into ${out.planned}`);
     }
   } catch (e) {
+    if (e.consentRequired) askForConsent();
     flash(e.message, true);
   } finally {
     busy = false;
