@@ -827,6 +827,240 @@ def t28():
 results.append(run("a part file cut short by a crash is sent again, not trusted", t28))
 
 
+# 29 to 34. A chunk whose transcript looks truncated is cut in half and each
+#    half sent on its own, and each of those is billed as it lands too. Only
+#    the finished chunk used to be kept, so a failure on the second half made
+#    the retry pay again for the truncated whole AND the half that had
+#    already come back. Every part is now kept under its own name ("2",
+#    "2.0", "2.1", "2.1.0"), and a part found truncated is kept as split.
+def part_of(path):
+    """'chunk_002.1.m4a' -> '2.1'. The recording itself, sent whole, is '1'."""
+    name = Path(path).name
+    if not name.startswith("chunk_"):
+        return "1"
+    head, _, rest = name[len("chunk_"):-len(".m4a")].partition(".")
+    return str(int(head)) + (f".{rest}" if rest else "")
+
+
+class HalvingProvider(ChunkProvider):
+    """Sends back too many words for the parts in `truncate`, fails on the
+    ones in `fail`, and records every part it is sent."""
+
+    def __init__(self, truncate=(), fail=(), **kw):
+        super().__init__(**kw)
+        self.truncation_word_threshold = 10
+        self.truncate = set(truncate)
+        self.fail = set(fail)
+
+    def transcribe_file(self, path):
+        part = part_of(path)
+        self.sent.append(part)
+        if part in self.fail:
+            raise RuntimeError(f"upload failed on part {part}")
+        if part in self.truncate:
+            return " ".join(["word"] * 20)
+        return f"words of part {part}"
+
+
+class HalvingAudio(ChunkedAudio):
+    """ChunkedAudio whose chunks can be halved, and halved again: a half of
+    chunk_002.m4a is chunk_002.0.m4a, and lasts half as long."""
+
+    def __init__(self, seconds, chunk_seconds=600):
+        super().__init__(seconds)
+        self.chunk_seconds = chunk_seconds
+
+    def __enter__(self):
+        super().__enter__()
+        import math
+
+        def fake_split(src, work_dir, seconds):
+            src = Path(src)
+            if seconds == self.chunk_seconds:
+                count = max(1, math.ceil(self.seconds / seconds))
+                return [work_dir / f"chunk_{i:03d}.m4a" for i in range(1, count + 1)]
+            base = src.stem if src.name.startswith("chunk_") else "chunk_001"
+            return [work_dir / f"{base}.{n}.m4a" for n in range(2)]
+
+        def fake_duration(path):
+            name = Path(path).name
+            if not name.startswith("chunk_"):
+                return self.seconds
+            whole = min(self.seconds, self.chunk_seconds)
+            return whole / 2 ** name[len("chunk_"):-len(".m4a")].count(".")
+
+        transcribe.split = fake_split
+        transcribe.duration_seconds = fake_duration
+        return self
+
+
+def halving_run(provider, audio, checkpoint, expect_error):
+    try:
+        transcribe.transcribe(audio, provider=provider, checkpoint=checkpoint)
+    except RuntimeError as exc:
+        assert expect_error in str(exc), exc
+    else:
+        raise AssertionError(f"the failure on {expect_error} was swallowed")
+
+
+def t29():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    checkpoint = config.WORK_DIR / "chunk-test"
+    import shutil
+    shutil.rmtree(checkpoint, ignore_errors=True)
+    with HalvingAudio(seconds=1800.0):   # three 10 minute chunks
+        failing = HalvingProvider(truncate={"2"}, fail={"2.1"})
+        halving_run(failing, audio, checkpoint, "part 2.1")
+        assert failing.sent == ["1", "2", "2.0", "2.1"], failing.sent
+        (slot,) = [p for p in checkpoint.iterdir() if p.is_dir()]
+        assert sorted(p.name for p in slot.glob("part_*.txt")) == [
+            "part_001.txt", "part_002.0.txt", "part_002.txt"], list(slot.iterdir())
+
+        retry = HalvingProvider(truncate={"2"})
+        text = transcribe.transcribe(audio, provider=retry, checkpoint=checkpoint)
+    # Exactly one more request: the half that failed. Not the whole chunk
+    # again to learn it truncates, and not the half that already came back.
+    assert retry.sent == ["2.1", "3"], f"the retry re-sent paid parts: {retry.sent}"
+    expected = "\n\n".join(f"words of part {p}" for p in ("1", "2.0", "2.1", "3"))
+    assert text == expected, text
+    shutil.rmtree(checkpoint, ignore_errors=True)
+results.append(run("a retry after half B of a truncated chunk fails sends only half B", t29))
+
+
+def t30():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    checkpoint = config.WORK_DIR / "chunk-test"
+    import shutil
+    shutil.rmtree(checkpoint, ignore_errors=True)
+    with HalvingAudio(seconds=1800.0):
+        # Chunk 2 truncates, and so does its second half, whose second
+        # quarter then fails. Quarters are as deep as the halving goes.
+        failing = HalvingProvider(truncate={"2", "2.1"}, fail={"2.1.1"})
+        halving_run(failing, audio, checkpoint, "part 2.1.1")
+        assert failing.sent == ["1", "2", "2.0", "2.1", "2.1.0", "2.1.1"], failing.sent
+
+        retry = HalvingProvider(truncate={"2", "2.1"})
+        text = transcribe.transcribe(audio, provider=retry, checkpoint=checkpoint)
+        assert retry.sent == ["2.1.1", "3"], f"the retry re-sent paid parts: {retry.sent}"
+        expected = "\n\n".join(f"words of part {p}"
+                               for p in ("1", "2.0", "2.1.0", "2.1.1", "3"))
+        assert text == expected, text
+
+        # Once chunk 2 is back whole, its own record is its stitched text
+        # rather than the split marker, and a third run pays for nothing.
+        (slot,) = [p for p in checkpoint.iterdir() if p.is_dir()]
+        record = json.loads((slot / "part_002.txt").read_text())
+        assert record["text"] == "\n\n".join(
+            f"words of part {p}" for p in ("2.0", "2.1.0", "2.1.1")), record
+        again = HalvingProvider(truncate={"2", "2.1"})
+        assert transcribe.transcribe(audio, provider=again, checkpoint=checkpoint) == expected
+        assert again.sent == [], again.sent
+    shutil.rmtree(checkpoint, ignore_errors=True)
+results.append(run("halves of halves are kept too, and reused at every depth", t30))
+
+
+def t31():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    checkpoint = config.WORK_DIR / "chunk-test"
+    import shutil
+    shutil.rmtree(checkpoint, ignore_errors=True)
+    with HalvingAudio(seconds=1800.0):
+        halving_run(HalvingProvider(truncate={"2"}, fail={"2.1"}), audio,
+                    checkpoint, "part 2.1")
+        (slot,) = [p for p in checkpoint.iterdir() if p.is_dir()]
+        # Power lost after the rename: half 2.0 is cut off partway through.
+        whole = (slot / "part_002.0.txt").read_text()
+        (slot / "part_002.0.txt").write_text(whole[: len(whole) // 2])
+        retry = HalvingProvider(truncate={"2"})
+        text = transcribe.transcribe(audio, provider=retry, checkpoint=checkpoint)
+        assert retry.sent == ["2.0", "2.1", "3"], f"a damaged half was trusted: {retry.sent}"
+        expected = "\n\n".join(f"words of part {p}" for p in ("1", "2.0", "2.1", "3"))
+        assert text == expected, text
+
+        shutil.rmtree(checkpoint, ignore_errors=True)
+        halving_run(HalvingProvider(truncate={"2"}, fail={"2.1"}), audio,
+                    checkpoint, "part 2.1")
+        (slot,) = [p for p in checkpoint.iterdir() if p.is_dir()]
+        # The split marker is cut short, and the half filed as 2.0 is some
+        # other part's record, then one cut from audio of a different size.
+        (slot / "part_002.txt").write_text('{"part": "2", "by')
+        (slot / "part_002.0.txt").write_text(json.dumps(
+            {"part": "2.1", "bytes": 1000, "text": "elsewhere"}))
+        retry = HalvingProvider(truncate={"2"}, fail={"2.1"})
+        halving_run(retry, audio, checkpoint, "part 2.1")
+        assert retry.sent == ["2", "2.0", "2.1"], f"a damaged part was trusted: {retry.sent}"
+        (slot / "part_002.0.txt").write_text(json.dumps(
+            {"part": "2.0", "bytes": 999, "text": "cut differently"}))
+        retry = HalvingProvider(truncate={"2"})
+        text = transcribe.transcribe(audio, provider=retry, checkpoint=checkpoint)
+        assert retry.sent == ["2.0", "2.1", "3"], f"a half of another size was trusted: {retry.sent}"
+        assert "cut differently" not in text and "elsewhere" not in text, text
+    shutil.rmtree(checkpoint, ignore_errors=True)
+results.append(run("a sub-part file cut short or filed wrong is sent again, not trusted", t31))
+
+
+def t32():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    checkpoint = config.WORK_DIR / "chunk-test"
+    import shutil
+    shutil.rmtree(checkpoint, ignore_errors=True)
+    # Short enough to go up whole, but a fast talker trips the truncation
+    # check: the halves are billed one by one here as well.
+    with HalvingAudio(seconds=300.0):
+        halving_run(HalvingProvider(truncate={"1"}, fail={"1.1"}), audio,
+                    checkpoint, "part 1.1")
+        retry = HalvingProvider(truncate={"1"})
+        text = transcribe.transcribe(audio, provider=retry, checkpoint=checkpoint)
+    assert retry.sent == ["1.1"], f"the retry re-sent paid parts: {retry.sent}"
+    assert text == "words of part 1.0\n\nwords of part 1.1", text
+    shutil.rmtree(checkpoint, ignore_errors=True)
+results.append(run("a recording sent whole keeps its halves when it truncates", t32))
+
+
+def t33():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    with Fakes() as fake:
+        transcribe.transcribe = fake._saved[(transcribe, "transcribe")]
+        with HalvingAudio(seconds=3600.0):   # six chunks
+            slot = watch.Resume(config.recording_key(when(TUESDAY_2PM_END), 3600.0))
+            # Another key's leftovers, halves and all: a different provider
+            # or split. They must go, not be stitched in.
+            stale = slot.chunks_dir() / "0123456789abcdef01234567"
+            stale.mkdir(parents=True)
+            for name in ("part_001.txt", "part_002.txt", "part_002.0.txt",
+                         "part_002.1.0.txt"):
+                (stale / name).write_text("{}")
+
+            failing = HalvingProvider(truncate={"3", "3.0"}, fail={"3.1"})
+            fake._remember(watch.providers, "get", lambda name=None: failing)
+            try:
+                watch.process(audio, interactive=False)
+            except RuntimeError as exc:
+                assert "part 3.1" in str(exc), exc
+            else:
+                raise AssertionError("the failure on part 3.1 was swallowed")
+            assert not stale.exists(), "another key's sub-parts outlived it"
+            assert sorted(p.name for p in slot.chunks_dir().glob("*/part_*.txt")) == [
+                "part_001.txt", "part_002.txt", "part_003.0.0.txt", "part_003.0.1.txt",
+                "part_003.0.txt", "part_003.txt"], list(slot.chunks_dir().glob("*/*"))
+
+            retry = HalvingProvider(truncate={"3", "3.0"})
+            watch.providers.get = lambda name=None: retry
+            watch.process(audio, interactive=False)
+    assert retry.sent == ["3.1", "4", "5", "6"], f"process re-billed paid parts: {retry.sent}"
+    body = fake.uploads[1]["body"]
+    order = ["1", "2", "3.0.0", "3.0.1", "3.1", "4", "5", "6"]
+    assert body == "\n\n".join(f"words of part {p}" for p in order), body
+    assert not slot.chunks_dir().exists(), "sub-part files outlived a finished lecture"
+    assert not slot.dir.exists(), "the checkpoint outlived a finished lecture"
+results.append(run("process() resumes a halved chunk and cleans up every part after", t33))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
