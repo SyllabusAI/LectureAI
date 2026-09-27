@@ -390,7 +390,7 @@ def t10():
                 "notes": [], "reasons": ["Calendar said no"]}
 
     with Swap((transcribe, "duration_seconds", lambda p: 3600.0),
-              (transcribe, "transcribe", lambda p, on_progress=None: "words here"),
+              (transcribe, "transcribe", lambda p, on_progress=None, **kw: "words here"),
               (summarize, "summarize", lambda t, c, d: {
                   "summary_md": "# notes", "topic_slug": "Costing",
                   "key_terms": [], "action_items": list(ITEMS)}),
