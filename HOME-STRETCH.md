@@ -44,7 +44,7 @@ from the planning pass, and it needs none of the commercial machinery.
 Stage 1 exists to find out what breaks with people who are not you, before
 any money is involved. That is worth more than three extra weeks of features.
 
-### Stage 2: paid launch, target Monday November 17
+### Stage 2: paid launch, target Monday October 12
 
 - Managed keys, metering, Stripe, the three tiers, and V3.
 - Roughly 58 further hours. Seven weeks at 8 hours a week.
@@ -214,7 +214,7 @@ $9.90 is the assistant and $6.75 is audio.
 **Read the Pro row as the gap to close, not as the plan.** $25 is published
 and the assistant it was priced on is not built. On today's deployed stack,
 which would run the assistant on Opus 5, $25 is a 29% margin. Sonnet 5 is what
-takes it to 53%. Nothing is being sold until November 17, so the price and the
+takes it to 53%. Nothing is being sold until October 12, so the price and the
 assistant have that long to meet.
 
 **With the assistant on Sonnet 5:**
@@ -305,7 +305,7 @@ per-user variable cost and card fees, and nothing else. Not subtracted:
 Cloudflare and D1 (small but real), the deferred $99/year Apple signing,
 insurance, the $1.5k to $4k lawyer, support time, refunds, failed payments,
 churn, or any of Trace's hours. The founding cohort is free, so the 25-user
-row is $0 until the paid launch on November 17.
+row is $0 until the paid launch on October 12.
 
 **Two things make these conservative, and one makes them optimistic.**
 
@@ -376,7 +376,7 @@ at Starter, 4 at Standard, all of them at Pro.
 - Self-hosted activation analytics on D1. No third-party pixel.
 - The invite and onboarding path for 25 people.
 
-### Stage 2, to November 17
+### Stage 2, to October 12
 
 **P4. Transcriber provider seam**. DONE 2026-09-15 (LectureAI #50)
 - A `TranscriptionProvider` protocol carrying `max_bytes`,

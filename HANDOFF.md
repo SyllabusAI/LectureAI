@@ -388,7 +388,7 @@ economics and the security bar. The short version:
 **The launch plan.** Two stages. Stage 1, the founding cohort, target Monday
 **2026-10-13**: 25 invited users, free, on BYO keys, needing the signed app,
 the legal and consent work, self-serve deletion, and the security bar. Stage
-2, the paid launch, target Monday **2026-11-17**: managed keys, metering,
+2, the paid launch, target Monday **2026-10-12**: managed keys, metering,
 Stripe, the three tiers, and the assistant. Pricing is decided: Starter $9 (15
 hr), Standard $15 (30 hr), Pro $25 (45 hr plus 15 assistant sessions),
 published on the site 2026-09-19. No free tier; friends and family get a
