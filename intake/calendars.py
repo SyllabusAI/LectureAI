@@ -211,13 +211,20 @@ class Ledger:
         The same lecture counts whatever the date says: a re-run that moved
         a deadline is still the same to-do. Another lecture counts when it
         filed the same errand for the same course on the same day, which is
-        an assignment brought up in two class periods.
+        an assignment brought up in two class periods. UNKNOWN is not a real
+        course, though: it is every lecture nothing could be matched to, so
+        two of them agreeing on "UNKNOWN" says nothing about whether they are
+        the same class. Without this guard, two different lectures that both
+        landed in UNKNOWN and happened to share a due date and similar
+        wording silently merged onto one calendar entry, and the second
+        lecture's to-do was dropped as if already filed.
         """
         for entry in self.items:
             if entry.get("dest") != dest:
                 continue
             same_lecture = bool(lecture) and entry.get("lecture") == lecture
-            same_day = entry.get("course") == course and entry.get("due") == due
+            same_day = (course != config.UNKNOWN_COURSE
+                        and entry.get("course") == course and entry.get("due") == due)
             if (same_lecture or same_day) and tasktext.same(task, entry.get("task", "")):
                 return entry
         return None
