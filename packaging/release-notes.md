@@ -3,6 +3,8 @@
 **What's new**
 
 - Recording starts right away. Syllabus no longer asks you to tick a permission box before your first lecture. Getting permission to record is still up to you, as the [Terms](https://syllabusaccounts.maincoursemedia.com/terms) explain.
+- A safer panel. Syllabus now loads only its own scripts and styles and refuses to be embedded in other pages, so a stray web page cannot tamper with it.
+- Switching accounts on one Mac no longer carries the first account's Google Drive access over to the next one.
 
 Download `{{dmg}}`, open it, and drag Syllabus to Applications. Open Syllabus from Applications and it starts on its Setup page: sign in to your Syllabus account, pick a microphone, enter your class schedule, and connect Google Drive. A signed-in Mac holds no API key of its own, because transcription and summaries are billed to the account. Without an account, paste two keys of your own instead, one from OpenAI and one from Anthropic. Nothing else to install.
 
