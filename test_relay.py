@@ -861,13 +861,16 @@ def t26():
     from intake import signin
     account.save(ME)
     try:
-        want = {k.lower(): v for k, v in signin.STATIC_SECURITY_HEADERS.items()}
+        want = {"x-frame-options": "DENY", "x-content-type-options": "nosniff",
+                "referrer-policy": "same-origin", "x-permitted-cross-domain-policies": "none"}
+        assert want.items() <= {k.lower(): v for k, v in signin.STATIC_SECURITY_HEADERS.items()}.items()
         for path, viewer in (("/", None), ("/api/status", None), ("/nope", None),
                              ("/", {"email": "other@example.com", "account_id": "zz"})):
             head = relay.serve(gui.app, req(path, viewer=viewer))[0]
             got = {k.lower(): v for k, v in head["headers"].items()}
             for name, value in want.items():
                 assert got.get(name) == value, f"{path}: {name} did not survive the relay ({got.get(name)!r})"
+            assert "camera=()" in got.get("permissions-policy", ""), f"{path}: no Permissions-Policy over the relay"
             assert got.get("strict-transport-security", "").startswith("max-age="), f"{path}: no HSTS over the relay"
             assert "includesubdomains" in got["strict-transport-security"].lower()
             assert "default-src 'none'" in got.get("content-security-policy", ""), "CSP lost"
