@@ -116,14 +116,20 @@ def save(account: Account) -> None:
 
 def forget() -> None:
     """Drop this Mac's account, and everything cached on its behalf: the live
-    Drive token in memory and the last-known grant state on disk, both of which
-    belong to the account being left."""
+    Drive token in memory, the last-known grant state on disk, and the lecture
+    text the study assistant fetched, all of which belong to the account being
+    left."""
     forget_drive_token()
     for path in (config.ACCOUNT_FILE, _drive_cache_file()):
         try:
             path.unlink(missing_ok=True)
         except OSError:
             pass
+    try:
+        from intake import assistant
+        assistant.clear_cache()
+    except Exception as exc:  # noqa: BLE001 - signing out must not fail on housekeeping
+        _say(f"could not clear the assistant's cache: {exc}")
 
 
 def device_name() -> str:

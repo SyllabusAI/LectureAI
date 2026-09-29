@@ -1098,6 +1098,7 @@ def assistant_state():
     account needs an Anthropic key of its own. No network call here: whether
     the plan allows it is answered by the first question, not by this poll.
     """
+    assistant.sweep_legacy_once()   # an old plaintext cache goes as soon as the panel opens
     managed = assistant.managed()
     ready = managed or bool(config.ANTHROPIC_API_KEY)
     return jsonify({
