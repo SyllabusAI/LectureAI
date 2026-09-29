@@ -7,6 +7,7 @@
 - Switching accounts on one Mac no longer carries the first account's Google Drive access over to the next one.
 - The study assistant no longer keeps a copy of your lecture text on disk. What it fetches stays in memory for up to 30 minutes and is cleared when you quit or sign out. Copies from earlier versions are removed the first time you open it.
 - Summaries and the study assistant treat lecture text as material to work from, never as instructions, so a line spoken in a lecture cannot steer them.
+- Lectures that are hard to make out come out clearer. When a part of a recording is hard to follow, Syllabus transcribes that part again on a more accurate model and keeps the better result. Students talking near the recorder do not set it off. A part transcribed again counts as three times its length against your monthly hours.
 
 Download `{{dmg}}`, open it, and drag Syllabus to Applications. Open Syllabus from Applications and it starts on its Setup page: sign in to your Syllabus account, pick a microphone, enter your class schedule, and connect Google Drive. A signed-in Mac holds no API key of its own, because transcription and summaries are billed to the account. Without an account, paste two keys of your own instead, one from OpenAI and one from Anthropic. Nothing else to install.
 
