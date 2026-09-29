@@ -65,7 +65,12 @@ PANEL_PREFIX = "/p/"
 REQUEST_HEADERS = {"content-type", "accept", "accept-language", "if-none-match", "if-modified-since"}
 RESPONSE_HEADERS = {"content-type", "cache-control", "etag", "last-modified", "location", "vary", "content-language",
                     # The panel's own policy; signin._security_headers sets it.
-                    "content-security-policy"}
+                    "content-security-policy",
+                    # Also from signin._security_headers; test_relay checks
+                    # that every header it sets is named here.
+                    "x-frame-options", "x-content-type-options", "referrer-policy",
+                    "permissions-policy", "x-permitted-cross-domain-policies",
+                    "strict-transport-security"}
 
 DEFAULT_CHUNK_BYTES = 256 * 1024
 PING_SECONDS = 30

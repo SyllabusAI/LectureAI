@@ -857,6 +857,70 @@ results.append(run("the panel's Content-Security-Policy survives the relay, with
 
 
 
+def t26():
+    from intake import signin
+    account.save(ME)
+    try:
+        want = {k.lower(): v for k, v in signin.STATIC_SECURITY_HEADERS.items()}
+        for path, viewer in (("/", None), ("/api/status", None), ("/nope", None),
+                             ("/", {"email": "other@example.com", "account_id": "zz"})):
+            head = relay.serve(gui.app, req(path, viewer=viewer))[0]
+            got = {k.lower(): v for k, v in head["headers"].items()}
+            for name, value in want.items():
+                assert got.get(name) == value, f"{path}: {name} did not survive the relay ({got.get(name)!r})"
+            assert got.get("strict-transport-security", "").startswith("max-age="), f"{path}: no HSTS over the relay"
+            assert "includesubdomains" in got["strict-transport-security"].lower()
+            assert "default-src 'none'" in got.get("content-security-policy", ""), "CSP lost"
+    finally:
+        account.forget()
+results.append(run("each security header, HSTS included, survives the relay", t26))
+
+
+def t27():
+    """Forged viewers: the panel shows this Mac's own account, or refuses."""
+    account.save(ME)
+    try:
+        def seen(viewer, headers=None):
+            frames = relay.serve(gui.app, req("/api/status", viewer=viewer, headers=headers))
+            status = frames[0]["status"]
+            return status, (json.loads(unb64(frames)) if status == 200 else None)
+        # The right id with a spoofed email: allowed in (the id is what proves
+        # ownership) but the page is told the account's own email, not the frame's.
+        status, body = seen({"email": "attacker@evil.example", "account_id": "a1"})
+        assert status == 200 and body["signed_in_as"] == "me@example.com", (status, body)
+        # Right email, wrong or missing or empty account id: refused.
+        for viewer in ({"email": "me@example.com", "account_id": "a2"},
+                       {"email": "me@example.com"},
+                       {"email": "me@example.com", "account_id": ""},
+                       {"account_id": "a1"},
+                       {"email": "", "account_id": "a1"},
+                       {"email": None, "account_id": None},
+                       {"email": "me@example.com", "account_id": "A1"},
+                       {"email": "me@example.com", "account_id": "a1 "}):
+            assert seen(viewer)[0] == 403, viewer
+        # Identity headers a browser sends do nothing; they are not on the request whitelist.
+        forged = {"Intake-Viewer": "me@example.com", "Intake-Viewer-Account": "a1",
+                  "X-Forwarded-For": "127.0.0.1", "Host": "localhost", "Origin": "http://localhost",
+                  "Sec-Fetch-Site": "same-origin", "Cookie": "x=1"}
+        assert seen({"email": "x@example.com", "account_id": "a2"}, forged)[0] == 403
+        # Header names and values that try to inject a second header or line.
+        status, body = seen({"email": "me@example.com\r\nX-Evil: 1", "account_id": "a1"})
+        assert status == 200 and body["signed_in_as"] == "me@example.com"
+        # A Mac whose account file has no id at all trusts nobody, even an empty id.
+        account.save(account.Account("syd_t", "", "me@example.com", "Me", "d1", "Test Mac",
+                                     "syllabus", SERVICE, "x"))
+        assert seen({"email": "me@example.com", "account_id": ""})[0] == 403
+        assert seen({"email": "me@example.com"})[0] == 403
+        # The environ keys cannot be set by a plain local request.
+        with gui.app.test_client() as c:
+            res = c.get("/api/status", headers={"intake.viewer": "me@example.com",
+                                                "intake.viewer_account": "a1", "Intake-Relay": "1"})
+            assert res.get_json()["signed_in_as"] == ""
+    finally:
+        account.forget()
+results.append(run("a forged viewer is refused, and the name shown is the account's own", t27))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
