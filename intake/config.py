@@ -523,6 +523,36 @@ CHUNK_SECONDS = 8 * 60
 # A chunk coming back at or above this word count probably got cut off.
 TRUNCATION_WORD_THRESHOLD = 1700
 
+# --- Hard-to-hear lectures (quality.py) ---
+#
+# Every chunk is scored from the transcription model's own per-segment
+# confidence. When enough of the lecturer's speech in a chunk came back unsure,
+# that chunk is sent again to a stronger model (gpt-4o-transcribe), charged at
+# three times its length against the month's allowance. Students talking near
+# the recorder are told apart by loudness and never trigger a second pass.
+# Set the numbers below from real lectures with `intake quality <recording>`.
+
+# Send hard-to-hear chunks for a second pass. Off: score and log only.
+QUALITY_SECOND_PASS = False
+# A segment is unsure below this average log-probability. Clear speech sits
+# around -0.2 to -0.4.
+QUALITY_UNSURE_LOGPROB = -0.7
+# ...or above this compression ratio, which is the model repeating itself.
+QUALITY_LOOPING_RATIO = 2.4
+# A segment at or above this no-speech probability is a pause, not speech.
+QUALITY_NO_SPEECH = 0.6
+# An unsure segment this many dB quieter than the lecturer is the room.
+QUALITY_QUIETER_DB = 8.0
+# A chunk is hard to hear when this share of its speech is the lecturer unsure.
+QUALITY_HARD_SHARE = 0.25
+# Too little speech to judge (a break, the end of class): leave it alone.
+QUALITY_MIN_SPEECH_SECONDS = 30
+# Keep the first transcript when the second pass has fewer than this share of
+# its words. gpt-4o-transcribe can drop whole sentences (a repeated one, a
+# side comment) that the first pass had; losing lecture is worse than a few
+# unsure words.
+QUALITY_MIN_WORD_RATIO = 0.5
+
 # --- Output handling ---
 
 # Upload the summary as a real Google Doc rather than a .md file.

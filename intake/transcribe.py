@@ -24,7 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from intake import config, providers, tools
+from intake import config, providers, quality, tools
 from intake.providers import TranscriptionProvider
 
 
@@ -224,6 +224,11 @@ class ChunkCheckpoint:
             return None
         return record
 
+    def record(self, part: str, audio: Path) -> dict | None:
+        """The whole record kept for this part, for what it says beyond the
+        text: the scores it came back with, and whether it is a second pass."""
+        return self._record(part, audio)
+
     def get(self, part: str, audio: Path) -> str | None:
         """The text an earlier attempt kept for this part, or None."""
         record = self._record(part, audio)
@@ -236,9 +241,12 @@ class ChunkCheckpoint:
         record = self._record(part, audio)
         return record is not None and record.get("split") is True
 
-    def put(self, part: str, audio: Path, text: str) -> None:
-        """Keep one part's text."""
-        self._write(part, {"part": part, "bytes": _size(audio), "text": text})
+    def put(self, part: str, audio: Path, text: str, **extra) -> None:
+        """Keep one part's text, and anything else worth knowing on a retry
+        (`segments`, the scores a second pass is decided on; `quality`,
+        "high" once a second pass has replaced the text)."""
+        self._write(part, {"part": part, "bytes": _size(audio), "text": text,
+                           **{k: v for k, v in extra.items() if v is not None}})
 
     def put_split(self, part: str, audio: Path) -> None:
         """Keep that this part came back truncated and is being halved. Its
@@ -335,7 +343,10 @@ def transcribe(
                     Path(checkpoint),
                     ChunkCheckpoint.key(src, provider, compressed, [audio], whole=True))
                 saved.open(create=False)
-            text = _transcribe_chunk(audio, provider, work_dir, saved, "1")
+            scores: dict = {}
+            text = _transcribe_chunk(audio, provider, work_dir, saved, "1", scores=scores)
+            verdicts: list[quality.Verdict] = []
+            text = _second_pass(audio, provider, text, scores.get("segments"), None, "1", verdicts)
             log(f"  done: {len(text.split())} words")
             return text
 
@@ -350,29 +361,103 @@ def transcribe(
                 Path(checkpoint),
                 ChunkCheckpoint.key(src, provider, compressed, chunks))
             saved.open()
+        verdicts: list[quality.Verdict] = []
         for i, chunk in enumerate(chunks, start=1):
             earlier = saved.get(str(i), chunk) if saved else None
             if earlier is not None:
                 log(f"  chunk {i}/{len(chunks)}: reusing what an earlier attempt paid for")
+                # A first pass kept with its scores and never replaced may
+                # still be owed its second pass: the failure being retried
+                # can have been that very call.
+                record = saved.record(str(i), chunk) or {}
+                if record.get("quality") != "high":
+                    earlier = _second_pass(chunk, provider, earlier, record.get("segments"),
+                                           saved, str(i), verdicts)
                 parts.append(earlier)
                 continue
             log(f"  chunk {i}/{len(chunks)} ...")
             progress(f"part {i} of {len(chunks)}")
-            text = _transcribe_chunk(chunk, provider, work_dir, saved, str(i))
+            scores: dict = {}
+            text = _transcribe_chunk(chunk, provider, work_dir, saved, str(i), scores=scores)
+            # Kept before any second pass is tried, so a failure in that one
+            # never costs the first pass again.
             if saved:
-                saved.put(str(i), chunk, text)
+                saved.put(str(i), chunk, text, segments=scores.get("segments"))
+            text = _second_pass(chunk, provider, text, scores.get("segments"), saved, str(i), verdicts)
             parts.append(text)
 
         text = "\n\n".join(p for p in parts if p)
         log(f"  done: {len(text.split())} words from {len(chunks)} chunks")
+        if verdicts:
+            hard = [v for v in verdicts if v.second_pass]
+            taken = sum(v.second_pass_taken for v in hard)
+            noisy = sum(v.verdict == quality.NOISY_ROOM for v in verdicts)
+            log(f"  quality: {len(verdicts)} parts scored, {len(hard)} hard to hear"
+                + (f" ({taken} given a second pass)" if hard else "")
+                + (f", {noisy} with a noisy room" if noisy else ""))
         return text
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def _call(provider: TranscriptionProvider, chunk: Path) -> tuple[str, list | None]:
+    """One request, with the provider's segment scores when it has any."""
+    scored = getattr(provider, "transcribe_scored", None)
+    if scored is None:
+        return provider.transcribe_file(chunk), None
+    result = scored(chunk)
+    return result.text, result.segments
+
+
+def _second_pass(
+    chunk: Path, provider: TranscriptionProvider, text: str, segments: list | None,
+    saved: ChunkCheckpoint | None, part: str, verdicts: list,
+) -> str:
+    """Score one chunk and, when it is hard to hear, try the stronger model.
+
+    Whatever goes wrong with the second pass, the first transcript stands: an
+    allowance that cannot cover three times the chunk, a provider that is
+    down, an answer that came back empty or cut short. A second pass is an
+    improvement on a transcript that already exists, never a reason to lose
+    it. See quality.py for how the verdict is reached.
+    """
+    if segments is None:
+        return text
+    verdict = quality.assess(chunk, segments)
+    verdicts.append(verdict)
+    log(f"    quality: {verdict.summary()}")
+    if not verdict.second_pass:
+        return text
+    if not config.QUALITY_SECOND_PASS:
+        log("    a second pass would run here; QUALITY_SECOND_PASS is off")
+        return text
+    try:
+        better = provider.transcribe_scored(chunk, quality="high")
+    except Exception as exc:
+        log(f"    second pass not taken, first transcript kept: {exc}")
+        return text
+    new = better.text.strip()
+    threshold = provider.truncation_word_threshold
+    if not new or (threshold is not None and len(new.split()) >= threshold):
+        log("    second pass came back empty or cut short; first transcript kept")
+        return text
+    if len(new.split()) < config.QUALITY_MIN_WORD_RATIO * len(text.split()):
+        log(f"    second pass has {len(new.split())} words against {len(text.split())}; "
+            f"it may have dropped lecture, so the first transcript is kept")
+        return text
+    cost = (f", {better.charged_seconds / 60:.0f} min of allowance"
+            if better.charged_seconds else "")
+    log(f"    second pass: {len(new.split())} words against {len(text.split())}{cost}")
+    if saved:
+        saved.put(part, chunk, new, quality="high")
+    verdict.second_pass_taken = True
+    return new
+
+
 def _transcribe_chunk(
     chunk: Path, provider: TranscriptionProvider, work_dir: Path,
     saved: ChunkCheckpoint | None = None, part: str = "1", depth: int = 0,
+    scores: dict | None = None,
 ) -> str:
     """Transcribe one chunk, halving it if the output looks truncated.
 
@@ -405,7 +490,11 @@ def _transcribe_chunk(
     if seconds:
         log(f"    part {part} came back truncated before; going straight to its halves")
     else:
-        text = provider.transcribe_file(chunk)
+        text, segments = _call(provider, chunk)
+        # Only a chunk that came back in one piece is scored: halves each
+        # have their own scores, and nothing here stitches them together.
+        if depth == 0 and scores is not None:
+            scores["segments"] = segments
 
         threshold = provider.truncation_word_threshold
         if threshold is None or len(text.split()) < threshold:
@@ -413,6 +502,8 @@ def _transcribe_chunk(
                 saved.put(part, chunk, text)
             return text
 
+        if scores is not None:
+            scores.pop("segments", None)
         seconds = duration_seconds(chunk)
         if depth >= 2 or not seconds or seconds < 120:
             log(f"    WARNING: {len(text.split())} words from {chunk.name} may be "
