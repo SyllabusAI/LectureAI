@@ -865,6 +865,82 @@ results.append(run("a device token only goes to the service that issued it",
                    t_bound_destination))
 
 
+def _drive_answers(tokens):
+    """A service that hands out the token for whichever bearer asks."""
+    def answers(method, url, headers, body, timeout):
+        path = url[len(SERVICE):]
+        assert path == "/drive/token", path
+        who = headers.get("Authorization", "")[len("Bearer "):]
+        return 200, {"access_token": tokens[who][0], "expires_in": 3600, "google_email": tokens[who][1]}
+    return answers
+
+
+def t_drive_cache_bound_to_account():
+    reset()
+    account.forget_drive_token()
+    account.transport = _drive_answers({"syd_a": ("ya29.A", "a@gmail.com"), "syd_b": ("ya29.B", "b@gmail.com")})
+    account.save(account.Account("syd_a", "acctA", "a@example.com", "A", "d1", "Mac", "syllabus", SERVICE, "x"))
+    assert account.drive_token()[0] == "ya29.A"
+    # Swap the account file directly: no sign_out, no forget. The cache
+    # itself has to notice that the account is different.
+    account.save(account.Account("syd_b", "acctB", "b@example.com", "B", "d1", "Mac", "syllabus", SERVICE, "x"))
+    token, _, email = account.drive_token()
+    assert (token, email) == ("ya29.B", "b@gmail.com"), (token, email)
+    # And the same account still hits the cache.
+    calls = []
+    account.transport = lambda *a: calls.append(a) or (500, {})
+    assert account.drive_token()[0] == "ya29.B" and not calls
+results.append(run("the cached Drive token is never handed to a different account", t_drive_cache_bound_to_account))
+
+
+def t_drive_cleared_on_sign_out():
+    service = reset()
+    account.forget_drive_token()
+    tokens = {"syd_abc": ("ya29.A", "a@gmail.com")}
+    inner = _drive_answers(tokens)
+
+    def answers(method, url, headers, body, timeout):
+        if url.endswith("/device/revoke"):
+            return 200, {"ok": True}
+        return inner(method, url, headers, body, timeout)
+    account.transport = answers
+    for leave in (account.sign_out, account.forget):
+        account.save(account.Account("syd_abc", "acctA", "a@example.com", "A", "d1", "Mac", "syllabus", SERVICE, "x"))
+        account.drive_token()
+        assert account._drive["token"] == "ya29.A" and account.drive_cached()["google_email"] == "a@gmail.com"
+        leave()
+        assert account._drive["token"] == "" and account._drive["email"] == "" and account._drive["account_id"] == "", \
+            f"{leave.__name__} left the Drive token in memory"
+        assert account.drive_cached() == {}, f"{leave.__name__} left the last account's grant state on disk"
+results.append(run("signing out or forgetting the account clears the cached Drive token", t_drive_cleared_on_sign_out))
+
+
+def t_refresh_write_is_private():
+    from intake import upload
+    from google.oauth2.credentials import Credentials
+    reset()
+    account.forget()
+    config.TOKEN_FILE.write_text(json.dumps({"token": "old", "refresh_token": "r", "client_id": "c",
+                                              "client_secret": "s", "scopes": config.DRIVE_SCOPES,
+                                              "expiry": "2000-01-01T00:00:00Z"}))
+    os.chmod(config.TOKEN_FILE, 0o644)
+    real = Credentials.refresh
+
+    def fake_refresh(self, request):
+        self.token = "new"
+        import datetime
+        self.expiry = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+    Credentials.refresh = fake_refresh
+    try:
+        upload.get_credentials(interactive=False)
+    finally:
+        Credentials.refresh = real
+    assert stat.S_IMODE(config.TOKEN_FILE.stat().st_mode) == 0o600, oct(config.TOKEN_FILE.stat().st_mode)
+    assert json.loads(config.TOKEN_FILE.read_text())["token"] == "new"
+    config.TOKEN_FILE.unlink()
+results.append(run("a refreshed Google token is written back 0600 even over a 0644 file", t_refresh_write_is_private))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

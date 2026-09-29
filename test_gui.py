@@ -1762,6 +1762,36 @@ def t53():
 results.append(run("every panel answer carries a Content-Security-Policy with a fresh nonce that the pages use", t53))
 
 
+def t54():
+    from intake import relay, signin
+    want = {k.lower(): v for k, v in signin.STATIC_SECURITY_HEADERS.items()}
+    assert want["x-frame-options"] == "DENY" and want["x-content-type-options"] == "nosniff"
+    assert want["referrer-policy"] == "same-origin" and want["x-permitted-cross-domain-policies"] == "none"
+    for feature in ("camera", "geolocation", "payment", "microphone"):
+        assert f"{feature}=()" in want["permissions-policy"], feature
+    # 200s, a 404, and a refusal all carry them; the local panel does not send HSTS.
+    for path, headers in (("/", {}), ("/setup", {}), ("/api/status", {}), ("/nope", {}),
+                          ("/api/status", {"Host": "evil.example"})):
+        res = client.get(path, headers=headers)
+        for name, value in want.items():
+            assert res.headers.get(name) == value, f"{path}: {name} is {res.headers.get(name)!r}"
+        assert "Content-Security-Policy" in res.headers, "the CSP was clobbered"
+        assert "Strict-Transport-Security" not in res.headers, "HSTS on plain http"
+    # Every header set here is on the relay's whitelist, or the relay strips it.
+    for name in list(want) + ["strict-transport-security", "content-security-policy"]:
+        assert name in relay.RESPONSE_HEADERS, name
+results.append(run("every panel answer carries the security headers, local ones without HSTS", t54))
+
+
+def t55():
+    from intake import signin
+    res = client.get("/x", headers={"Host": "<b>x</b>.example"})
+    assert res.status_code == 403
+    assert b"<b>" not in res.data, res.data
+    assert signin.html.escape("<") == "&lt;"
+results.append(run("a refusal page escapes the host it names", t55))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -115,10 +115,15 @@ def save(account: Account) -> None:
 
 
 def forget() -> None:
-    try:
-        config.ACCOUNT_FILE.unlink(missing_ok=True)
-    except OSError:
-        pass
+    """Drop this Mac's account, and everything cached on its behalf: the live
+    Drive token in memory and the last-known grant state on disk, both of which
+    belong to the account being left."""
+    forget_drive_token()
+    for path in (config.ACCOUNT_FILE, _drive_cache_file()):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def device_name() -> str:
@@ -397,7 +402,9 @@ class DriveGrantMissing(Exception):
     """The account has no Drive grant, or Google stopped honoring it."""
 
 
-_drive: dict = {"token": "", "expires_at": 0.0, "email": ""}
+# account_id says whose token this is. Without it the cache would hand one
+# account's live token (and Google email) to whoever signs in next.
+_drive: dict = {"token": "", "expires_at": 0.0, "email": "", "account_id": ""}
 _drive_lock = threading.Lock()
 
 
@@ -450,11 +457,13 @@ def drive_token() -> tuple[str, float, str]:
     if acct is None:
         raise DriveGrantMissing("this Mac is not signed in to an account")
     with _drive_lock:
+        if _drive["account_id"] != acct.account_id:
+            _drive.update(token="", expires_at=0.0, email="", account_id="")
         if _drive["token"] and time.time() < _drive["expires_at"] - DRIVE_TOKEN_MARGIN:
             return _drive["token"], _drive["expires_at"], _drive["email"]
         status, data = call("POST", "/drive/token", {}, token=acct.token)
         if status in (404, 409):
-            _drive.update(token="", expires_at=0.0)
+            _drive.update(token="", expires_at=0.0, email="", account_id="")
             _note_drive(False, detail=str(data.get("reason") or data.get("error") or ""))
             raise DriveGrantMissing(
                 "the account has no Google Drive connection"
@@ -463,14 +472,14 @@ def drive_token() -> tuple[str, float, str]:
             raise RuntimeError(f"the account service answered {status} for a Drive token")
         expires_at = time.time() + float(data.get("expires_in") or 3600)
         _drive.update(token=str(data["access_token"]), expires_at=expires_at,
-                      email=str(data.get("google_email") or ""))
+                      email=str(data.get("google_email") or ""), account_id=acct.account_id)
         _note_drive(True, _drive["email"])
         return _drive["token"], expires_at, _drive["email"]
 
 
 def forget_drive_token() -> None:
     with _drive_lock:
-        _drive.update(token="", expires_at=0.0, email="")
+        _drive.update(token="", expires_at=0.0, email="", account_id="")
 
 
 def drive_status() -> dict:
