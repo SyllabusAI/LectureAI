@@ -17,6 +17,8 @@ on:
     branches: [main]
     paths:
       - "intake/schemas.py"
+      - "intake/assistant.py"
+      - "intake/summarize.py"
       - ".github/workflows/prompt-parity.yml"
       - ".github/workflows/prompt_parity.py"
   schedule:
@@ -41,10 +43,17 @@ jobs:
       - name: The lecture prompt must match syllabus-accounts
         run: |
           set -euo pipefail
-          URL=https://raw.githubusercontent.com/SyllabusAI/syllabus-accounts/main/src/prompts.ts
-          if ! curl -fsSL -o /tmp/prompts.ts "$URL"; then
-            echo "::error::could not fetch $URL. If src/prompts.ts moved or the repo went private,"
-            echo "::error::update this workflow and .github/workflows/prompt_parity.py in both repos."
-            exit 1
-          fi
-          python3 .github/workflows/prompt_parity.py intake/schemas.py /tmp/prompts.ts
+          # Compares against syllabus-accounts' main. The untrusted-data paragraphs
+          # and the transcript fence land in both repos in one release; while that
+          # main does not have them yet the script warns and skips those checks.
+          # Once both have them, any difference fails.
+          for f in prompts assistant; do
+            URL=https://raw.githubusercontent.com/SyllabusAI/syllabus-accounts/main/src/$f.ts
+            if ! curl -fsSL -o /tmp/$f.ts "$URL"; then
+              echo "::error::could not fetch $URL. If it moved or the repo went private,"
+              echo "::error::update this workflow and .github/workflows/prompt_parity.py in both repos."
+              exit 1
+            fi
+          done
+          python3 .github/workflows/prompt_parity.py intake/schemas.py /tmp/prompts.ts \
+            intake/assistant.py /tmp/assistant.ts intake/summarize.py
