@@ -444,19 +444,31 @@ def stage_two(service, lectures: list[Lecture], wanted: list[str]) -> tuple[list
 
 
 def record_session(course: str, question: str, escalated: bool,
-                   lectures: list[str], usage: dict) -> None:
+                   lectures: list[str], usage: dict, *, model: str | None = None,
+                   started: float | None = None, first_text: float | None = None) -> None:
     """One line per session in assistant.log: the escalation rate, measured.
 
     HOME-STRETCH.md prices Pro on a 15% escalation rate that has never been
     observed. This is the observation. Written as JSON so the rate can be read
     straight off the file rather than parsed out of prose.
+
+    Also which model answered and how long it took: the time to the first word
+    of the answer, and to the last. Those are what a model comparison reads,
+    and like everything else here they say nothing about what was asked.
     """
+    timing = {}
+    if started is not None:
+        timing["seconds"] = round(time.time() - started, 1)
+        if first_text is not None:
+            timing["first_text_seconds"] = round(first_text - started, 1)
     line = json.dumps({
         "when": datetime.now().isoformat(timespec="seconds"),
         "course": course,
         "question_chars": len(question),
         "escalated": escalated,
         "escalated_to": lectures,
+        "model": model or config.ASSISTANT_MODEL,
+        **timing,
         **usage,
     })
     try:
@@ -568,6 +580,7 @@ def ask(question: str, course: str, *, service=None, client=None):
     totals: dict = {}
     escalated_to: list[str] = []
     cited: set[str] = set()
+    first_text: float | None = None
 
     for round_no in range(MAX_TOOL_ROUNDS + 1):
         tools = [FETCH_TOOL] if round_no < MAX_TOOL_ROUNDS else []
@@ -582,6 +595,8 @@ def ask(question: str, course: str, *, service=None, client=None):
                 **({"tools": tools} if tools else {}),
             ) as stream:
                 for event in stream.text_stream:
+                    if first_text is None:
+                        first_text = time.time()
                     yield {"type": "text", "text": event}
                 answer = stream.get_final_message()
         except Exception as exc:
@@ -636,7 +651,8 @@ def ask(question: str, course: str, *, service=None, client=None):
             "content": result,
         }]})
 
-    record_session(course, question, bool(escalated_to), escalated_to, totals)
+    record_session(course, question, bool(escalated_to), escalated_to, totals,
+                   model=config.ASSISTANT_MODEL, started=started, first_text=first_text)
     yield {"type": "done",
            "escalated": bool(escalated_to),
            "escalated_to": escalated_to,
@@ -750,13 +766,14 @@ def refusal_text(status: int, data: dict) -> str:
     return ASSISTANT_REASONS.get(error) or f"The account service refused the question ({error or status})."
 
 
-def _round(body: dict, course: str, totals: dict, cost: list):
+def _round(body: dict, course: str, totals: dict, cost: list, meta: dict | None = None):
     """One call to the service. Yields panel events; the last is the outcome.
 
     The final item is {"type": "_outcome", ...}: an escalation to act on, or
     nothing, or the error that ended it. It is consumed by ask_managed and
     never reaches the panel.
     """
+    meta = {} if meta is None else meta
     status, got = stream_transport(body)
     if status == 409 and got.get("error") == "session_ended" and body.get("session_id") \
             and not body.get("continuation"):
@@ -787,6 +804,10 @@ def _round(body: dict, course: str, totals: dict, cost: list):
             for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
                 totals[key] = totals.get(key, 0) + int(event.get(key, 0) or 0)
             cost[0] += int(event.get("cost_microusd", 0) or 0)
+            # Which model the service answered on. It picks, not this Mac, and
+            # during a trial it alternates, so the log takes its word for it.
+            if event.get("model"):
+                meta["model"] = str(event["model"])
         elif kind == "error":
             yield {"type": "_outcome", "error": refusal_text(502, {"error": event.get("error", "")})}
             return
@@ -814,13 +835,17 @@ def ask_managed(question: str, course: str, lectures: list[Lecture], service, st
         body["session_id"] = _SESSIONS[course]
     totals: dict = {}
     cost = [0]
+    meta: dict = {}
+    first_text: float | None = None
     escalated_to: list[str] = []
 
     outcome: dict = {}
-    for event in _round(body, course, totals, cost):
+    for event in _round(body, course, totals, cost, meta):
         if event["type"] == "_outcome":
             outcome = event
         else:
+            if event["type"] == "text" and first_text is None:
+                first_text = time.time()
             yield event
     if outcome.get("own_key"):
         # Refused before a word was written, so ask() can start over on the
@@ -848,17 +873,20 @@ def ask_managed(question: str, course: str, lectures: list[Lecture], service, st
                 "continuation": escalate.get("continuation", []),
                 "transcripts": docs}
         outcome = {}
-        for event in _round(body, course, totals, cost):
+        for event in _round(body, course, totals, cost, meta):
             if event["type"] == "_outcome":
                 outcome = event
             else:
+                if event["type"] == "text" and first_text is None:
+                    first_text = time.time()
                 yield event
         if outcome.get("error"):
             yield {"type": "error", "text": outcome["error"]}
             return
 
     record_session(course, question, bool(escalated_to), escalated_to,
-                   {**totals, "cost_microusd": cost[0], "managed": True})
+                   {**totals, "cost_microusd": cost[0], "managed": True},
+                   model=meta.get("model"), started=started, first_text=first_text)
     yield {"type": "done",
            "escalated": bool(escalated_to),
            "escalated_to": escalated_to,

@@ -332,6 +332,25 @@ def t16():
 results.append(run("a signed-in Mac asks through the account service, with no key", t16))
 
 
+def t16b():
+    # The service says which model answered; with no word from it (an older
+    # service), the line falls back to the Mac's own constant.
+    status, evs = answer()
+    evs[-1] = {**evs[-1], "model": "claude-sonnet-5-5"}
+    lines = []
+    for reply in ((status, evs), answer()):
+        drive = managed(Service(reply))   # a fresh home each time
+        list(assistant.ask("What is process costing?", "ACCT-4321", service=drive))
+        lines += [json.loads(l) for l in (config.BASE_DIR / "assistant.log").read_text().splitlines()]
+    assert [l["model"] for l in lines] == ["claude-sonnet-5-5", config.ASSISTANT_MODEL], lines
+    for line in lines:
+        assert isinstance(line["seconds"], float) and line["seconds"] >= 0, line
+        assert 0 <= line["first_text_seconds"] <= line["seconds"], line
+        # Still nothing about what was asked beyond its length.
+        assert "question" not in line and "answer" not in line, line
+results.append(run("the log line says which model answered and how long it took", t16b))
+
+
 def t17():
     svc = Service(answer(), (409, {"error": "session_ended", "reason": "expired"}),
                   answer(session="sess_2"))
