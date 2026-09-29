@@ -364,6 +364,8 @@ Liam can do it, and each one has a clock that is not ours.
 | Sep 30 | Anthropic credit and auto-reload | Trace | Unconfirmed |
 | Oct 1 | Insurance broker call | Trace | Open |
 | Oct 1 | Privacy and terms to the lawyer | Liam | Drafted: syllabus-accounts #45 |
+| Oct 2 | `syllabus@maincoursemedia.com` group and a maincoursemedia.com address for Liam | Trace | Asked 2026-09-29. Google Workspace admin task |
+| Oct 3 | Cloud project support email and developer contact to `syllabus@` | Liam | Waits on the group |
 | Oct 6 | Lawyer's changes in, #45 merged and live | Liam | Waits on the lawyer |
 | Oct 6 | Signing, notarization, and Sparkle in `release.yml` | Claude | Waits on Apple |
 | Oct 7 | Swap in the live Stripe price ids and secrets, deploy | Claude | Waits on Stripe |
@@ -385,9 +387,15 @@ Liam can do it, and each one has a clock that is not ours.
   (syllabus-accounts #45), with the no-training statement and 18+, awaiting
   the lawyer. The old privacy page's "never come to this service" has been
   false since P5 and is gone in the draft.
-- Point the Google Cloud project's privacy policy URL at the new page. It
-  currently points at the agency policy, which never mentions Syllabus. That
-  is a live re-review risk on a published project.
+- ~~Point the Google Cloud project's privacy policy URL at the new page.~~
+  Already done: checked 2026-09-29, the Branding page links
+  `syllabusaccounts.maincoursemedia.com/privacy` and `/terms`, and shows
+  "verified". The address does not change when #45 goes live, so no
+  re-verification is expected from the new text.
+- Move the Google Cloud project's user support email and developer contact
+  from `hugahound23@gmail.com` to `syllabus@maincoursemedia.com`, once Trace
+  creates that group (asked 2026-09-29). Do it early: a change to a verified
+  app's branding can prompt a re-review.
 - ~~Blocking consent acknowledgment at setup: "I have permission to record."~~
   Shipped in 0.5.0 (#84), then **removed for 0.6.0** by decision 2026-09-29.
   The terms carry it instead: Syllabus does not obtain consent from anyone

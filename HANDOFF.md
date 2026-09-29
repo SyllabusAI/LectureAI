@@ -209,8 +209,14 @@ guard. That old client is unused and can be deleted; its secret still sits
 unused in Trace's `~/.intake/syllabus/.env`. The Web client's authorized
 redirect URIs must include the production `/oauth2/callback` and
 `http://localhost:8787/oauth2/callback` for `npm run dev`. The Cloud project's
-privacy policy URL still points at the agency policy, which never mentions
-Syllabus (HOME-STRETCH P1).
+Branding page (checked 2026-09-29) already has the home page, privacy link and
+terms link on `syllabusaccounts.maincoursemedia.com` (`/privacy`, `/terms`),
+`maincoursemedia.com` as the authorized domain, and a verified status, so the
+new pages show on the consent screen as soon as they deploy. The user support
+email and developer contact are still `hugahound23@gmail.com`; they move to
+`syllabus@maincoursemedia.com` once that address exists. The project's IAM is
+Trace's: Liam reaches it through his other Google account, not
+liam@groundbreakermarketing.com.
 
 **The allowance model, and the owner row.** The proxy meters transcription in
 audio seconds and summaries in tokens, and both refuse with the same code,
@@ -411,8 +417,8 @@ and `/proxy/assistant` with the session cap is in review (syllabus-accounts
 **Open, roughly in the order the plan wants them.** P0: Apple enrollment
 (deferred on cost), Developer ID signing and notarization in `build.sh` and
 `release.yml`, Sparkle self-update. P1: privacy policy and terms naming Main
-Course Media LLC, hosted on the account service; the Cloud project's privacy
-URL; self-serve account deletion; a no-training statement; 18+; lawyer
+Course Media LLC, hosted on the account service; the Cloud project's support
+email (the privacy URL is already right); self-serve account deletion; a no-training statement; 18+; lawyer
 review. (The blocking "I have permission to record" click-through was built
 and then removed in 0.6.0: the Terms carry the user's responsibility for
 consent instead.) P2: the security bar as defined in the plan (threat model,
