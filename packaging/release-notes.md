@@ -2,8 +2,7 @@
 
 **What's new**
 
-- You can now select and copy the study assistant's answers in the Mac app, so a study guide or quiz can go straight into your own notes.
-- Two lectures Syllabus could not match to a class no longer share one to-do. Each one's due date now shows up in Notion and your calendars.
+- Recording starts right away. Syllabus no longer asks you to tick a permission box before your first lecture. Getting permission to record is still up to you, as the [Terms](https://syllabusaccounts.maincoursemedia.com/terms) explain.
 
 Download `{{dmg}}`, open it, and drag Syllabus to Applications. Open Syllabus from Applications and it starts on its Setup page: sign in to your Syllabus account, pick a microphone, enter your class schedule, and connect Google Drive. A signed-in Mac holds no API key of its own, because transcription and summaries are billed to the account. Without an account, paste two keys of your own instead, one from OpenAI and one from Anthropic. Nothing else to install.
 
