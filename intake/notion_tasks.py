@@ -233,9 +233,18 @@ MATCH_PAGES = 3
 
 
 def _course_filter(mapping: dict, schema: dict, course: str) -> dict | None:
-    """A filter narrowing the query to one course, if the database has one."""
+    """A filter narrowing the query to one course, if the database has one.
+
+    UNKNOWN is not a course, it is every lecture nothing could be matched to.
+    Scoping the query to it would compare a task against every other
+    unrelated lecture ever filed there with no due date to narrow it, so two
+    different, unrelated classes that both landed in UNKNOWN could get merged
+    into one Notion row the moment their wording looked similar enough.
+    Falling through to the due-date filter below keeps the comparison to
+    tasks actually due the same day.
+    """
     name = mapping.get("course")
-    if not (name and course):
+    if not (name and course and course != config.UNKNOWN_COURSE):
         return None
     kind = schema.get(name, {}).get("type")
     if kind == "select":

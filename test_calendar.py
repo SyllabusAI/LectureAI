@@ -231,6 +231,26 @@ def t4():
 results.append(run("a lecture filed again never files a to-do twice", t4))
 
 
+def t4b():
+    reset()
+    # Two different, unrelated lectures that both failed to match a course
+    # (BIOL-1010 and HIST-2200, say) share nothing but the UNKNOWN bucket, a
+    # due date, and similar wording. UNKNOWN must not be treated as "the same
+    # course", or the second lecture's to-do silently disappears into the
+    # first's calendar entry.
+    fake = FakeBackend()
+    item = dict(ITEMS[0], task="Submit the reflection")
+    out = calendars.push(calendars.APPLE, [item], config.UNKNOWN_COURSE,
+                         lecture="2026-09-29T09:00", reach=lambda key: fake)
+    assert out["added"] == 1, out
+    out = calendars.push(calendars.APPLE, [item], config.UNKNOWN_COURSE,
+                         lecture="2026-10-01T13:00", reach=lambda key: fake)
+    assert out["added"] == 1 and out["skipped"] == 0, \
+        f"an unrelated lecture was dropped as a duplicate of another UNKNOWN one: {out}"
+    assert len(fake.created) == 2, fake.created
+results.append(run("two different lectures both filed under UNKNOWN never merge", t4b))
+
+
 def t5():
     reset()
     fake = FakeBackend(fail_on={"chapter"})

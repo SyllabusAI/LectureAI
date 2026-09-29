@@ -295,6 +295,31 @@ def t12():
 results.append(run("an item already in the database is skipped, not duplicated", t12))
 
 
+def t12b():
+    reset_overrides()
+    # UNKNOWN is not a real course, it is every lecture nothing could be
+    # matched to. Scoping the duplicate check to it, the way a real course
+    # is scoped, would compare a task against every other unrelated
+    # lecture's rows ever filed there with no due-date filter to narrow it:
+    # two different classes that both landed in UNKNOWN and happened to word
+    # a task similarly would silently merge. The check must fall through to
+    # a due-date filter instead, so it only ever compares same-day tasks.
+    fake = FakeNotion()
+    nt._request = fake
+    nt.push([{"task": "Submit the reflection", "due_date": "2026-09-29",
+             "kind": "assignment"}], config.UNKNOWN_COURSE)
+    first_filter = fake.queries[-1].get("filter")
+    assert first_filter == {"property": "Due", "date": {"equals": "2026-09-29"}}, \
+        f"the duplicate check was scoped to the shared UNKNOWN bucket, not the due date: {first_filter}"
+
+    nt.push([{"task": "Submit the reflection", "due_date": "2026-11-14",
+             "kind": "assignment"}], config.UNKNOWN_COURSE)
+    second_filter = fake.queries[-1].get("filter")
+    assert second_filter == {"property": "Due", "date": {"equals": "2026-11-14"}}, \
+        f"the duplicate check was scoped to the shared UNKNOWN bucket, not the due date: {second_filter}"
+results.append(run("two different lectures both filed under UNKNOWN are never compared to each other", t12b))
+
+
 def t13():
     reset_overrides()
     fake = FakeNotion()
