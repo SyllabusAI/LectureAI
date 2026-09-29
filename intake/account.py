@@ -261,7 +261,20 @@ def whoami() -> tuple[str, str]:
     if status != 200:
         return "unreachable", f"the account service answered {status}"
     account = data.get("account") or {}
-    return "ok", str(account.get("email") or acct.email)
+    fresh = str(account.get("email") or "").strip()
+    # The service's own answer to this Mac's own token (never anything from a
+    # relayed frame) is what keeps the stored email from going stale, since
+    # that is the email the panel shows as "Signed in as". Only when the
+    # answer is about the same account, and the file is still that account's.
+    if fresh and fresh != acct.email and str(account.get("id") or acct.account_id) == acct.account_id:
+        current = load()
+        if current is not None and current.token == acct.token:
+            current.email = fresh
+            try:
+                save(current)
+            except OSError as exc:
+                _say(f"could not update the stored account email: {exc}")
+    return "ok", fresh or acct.email
 
 
 def sign_out() -> None:
