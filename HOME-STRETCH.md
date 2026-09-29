@@ -388,7 +388,11 @@ Liam can do it, and each one has a clock that is not ours.
 - Point the Google Cloud project's privacy policy URL at the new page. It
   currently points at the agency policy, which never mentions Syllabus. That
   is a live re-review risk on a published project.
-- Blocking consent acknowledgment at setup: "I have permission to record."
+- ~~Blocking consent acknowledgment at setup: "I have permission to record."~~
+  Shipped in 0.5.0 (#84), then **removed for 0.6.0** by decision 2026-09-29.
+  The terms carry it instead: Syllabus does not obtain consent from anyone
+  recorded, and the person recording is responsible for it
+  (syllabus-accounts #45).
 - ~~Self-serve account deletion on the account page.~~ Done
   (syllabus-accounts #36).
 - Confirm each provider's settings back the no-training statement.

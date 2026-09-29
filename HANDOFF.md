@@ -412,7 +412,7 @@ and `/proxy/assistant` with the session cap is in review (syllabus-accounts
 (deferred on cost), Developer ID signing and notarization in `build.sh` and
 `release.yml`, Sparkle self-update. P1: privacy policy and terms naming Main
 Course Media LLC, hosted on the account service; the Cloud project's privacy
-URL; a blocking "I have permission to record" consent; self-serve account
+URL; self-serve account
 deletion; a no-training statement; 18+; lawyer review. P2: the security bar
 as defined in the plan (threat model, rate limiting on unauthenticated
 endpoints, ASVS pass, CSRF confirmation, a `DRIVE_KEY` rotation procedure).
