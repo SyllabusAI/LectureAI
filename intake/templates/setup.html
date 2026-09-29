@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<script>
+<script nonce="{{ csp_nonce }}">
   try {
     var saved = localStorage.getItem("lectureai-theme");
     if (saved === "light" || saved === "dark") {
@@ -16,7 +16,7 @@
     }
   } catch (e) { /* system theme is fine */ }
 </script>
-<style>
+<style nonce="{{ csp_nonce }}">
   :root {
     color-scheme: light dark;
     --brand: #8C52FF;
@@ -341,7 +341,7 @@
 
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 const $ = (id) => document.getElementById(id);
 let DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_NAMES = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday",

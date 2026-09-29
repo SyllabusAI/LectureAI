@@ -22,6 +22,8 @@ retired on 2026-09-15, and that code went with them.
 
 from __future__ import annotations
 
+import secrets
+
 from flask import Flask, g, jsonify, request
 
 from intake import account, config, relay
@@ -154,6 +156,9 @@ def gate():
     """Run before every request. None lets it through."""
     g.viewer = ""
     g.relayed = False
+    # A fresh nonce for every request, refused ones included, so that a page
+    # and the policy that admits its scripts are always from the same answer.
+    g.csp_nonce = secrets.token_urlsafe(18)
     # Before anything about who is looking: a request that came from another
     # site is refused whether it is local or relayed.
     elsewhere = cross_site()
@@ -187,6 +192,48 @@ def no_store(response):
     return response
 
 
+def content_security_policy(nonce: str) -> str:
+    """What a page of this panel may load and run.
+
+    The pages carry two scripts and one stylesheet of their own, each marked
+    with this response's nonce, so nothing else can run: no injected
+    <script>, no javascript: link, no handler written into markup (the pages
+    assign handlers from script, which a policy does not touch). Everything
+    the page fetches goes to the panel itself, which is the same origin
+    whether it is opened on this Mac or through the relay, where the base
+    path is only a prefix. The only outside origins are Google Fonts.
+
+    style-src-attr keeps inline style="..." attributes, because the dashboard
+    writes each course's color into the markup it builds; those cannot run
+    anything. Styles from a <style> element or a stylesheet still need the
+    nonce or Google Fonts.
+    """
+    return "; ".join([
+        "default-src 'none'",
+        f"script-src 'nonce-{nonce}'",
+        f"style-src-elem 'nonce-{nonce}' https://fonts.googleapis.com",
+        "style-src-attr 'unsafe-inline'",
+        "font-src https://fonts.gstatic.com",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+        "form-action 'self'",
+        "base-uri 'none'",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+    ])
+
+
+def _security_headers(response):
+    """Put the policy on every answer. relay.RESPONSE_HEADERS must name
+    Content-Security-Policy too, or the relay drops it on the way out."""
+    nonce = getattr(g, "csp_nonce", "")
+    if nonce:
+        response.headers["Content-Security-Policy"] = content_security_policy(nonce)
+    return response
+
+
 def install(app: Flask) -> None:
     app.before_request(gate)
     app.after_request(no_store)
+    app.after_request(_security_headers)
+    app.context_processor(lambda: {"csp_nonce": getattr(g, "csp_nonce", "")})
