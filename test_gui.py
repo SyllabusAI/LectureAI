@@ -17,7 +17,7 @@ from _test_home import fresh_home  # noqa: E402
 fresh_home()  # before config is imported, so nothing touches ~/.intake
 
 from intake import config  # noqa: E402
-from intake import cancellations, consent, doctor, gui  # noqa: E402
+from intake import cancellations, doctor, gui  # noqa: E402
 
 
 def run(label, fn):
@@ -349,9 +349,6 @@ gui.recording.list_devices = lambda: [(0, "Someone's iPhone Microphone"),
                                       (1, "MacBook Pro Microphone")]
 # And no caffeinate is started for the `sleep` that stands in for ffmpeg.
 gui.recording._keep_awake = lambda pid: None
-# Permission to record is on file for the tests below, as it is on any Mac
-# that has been set up. t52 takes it away and checks every door without it.
-consent.record("panel")
 
 
 def t18():
@@ -360,7 +357,7 @@ def t18():
     html = res.get_data(as_text=True)
     assert "Lexend Deca" in html and "#8C52FF" in html, "setup page is off-brand"
     for step in ("API keys", "Microphone", "Class schedule", "Notion",
-                 "Permission to record", "Google Drive"):
+                 "Google Drive"):
         assert step in html, f"setup page is missing {step}"
     assert "/api/setup" in html and "/api/drive/login" in html
     # The panel itself must offer a way in.
@@ -1241,8 +1238,7 @@ results.append(run("watcher and agent commands, from a checkout and frozen", t38
 MUTATIONS = ["/api/record/start", "/api/record/stop", "/api/watcher/start",
              "/api/watcher/stop", "/api/login-item", "/api/drive/login",
              "/api/drive/disconnect", "/api/account/claim", "/api/account/cancel",
-             "/api/account/signout", "/api/setup", "/api/window/show",
-             "/api/consent"]
+             "/api/account/signout", "/api/setup", "/api/window/show"]
 
 
 def t39():
@@ -1668,74 +1664,67 @@ results.append(run("a panel.log rotated by another process is reclaimed, private
 
 
 def t52():
-    # Without permission to record on file: the record route refuses in a way
-    # the page understands, before anything is launched; the pages are told;
-    # Setup will not save without the box; and the dashboard's Confirm needs
-    # an explicit yes. Then each of those works once it is given.
+    # There is no permission click-through before recording (removed in
+    # 0.6.0; the Terms carry the user's responsibility for consent). In a home
+    # with nothing acknowledged, Record starts straight away, Setup saves
+    # without any permission field, neither payload carries one, the route
+    # that took the acknowledgment is gone, and neither page shows a checkbox.
+    import os
+    import signal
+    import subprocess
     point_config_at(setup_home)
-    config.CONSENT_FILE.unlink(missing_ok=True)
+    assert not (setup_home / "consent.json").exists()
     real_cmd = gui.recording._ffmpeg_command
     launched = []
 
     def stub(device_index, destination, limit):
+        destination.write_text("AUDIO")
         launched.append(destination)
         return ["sleep", "20"]
 
+    def _our_sleeps():
+        return subprocess.run(["pgrep", "-P", str(os.getpid()), "-f", "^sleep 20"],
+                              capture_output=True, text=True).stdout.split()
+
     gui.recording._ffmpeg_command = stub
     gui._recorder = None
+    config.RECORDING_STATE_FILE.unlink(missing_ok=True)
     try:
         res = client.post("/api/record/start", json={})
-        assert res.status_code == 403, res.status_code
-        body = res.get_json()
-        assert body["ok"] is False and body["consent_required"] is True, body
-        assert "permission to record" in body["error"], body
-        assert launched == [] and gui._recorder is None, "the mic opened anyway"
+        assert res.status_code == 200, (res.status_code, res.get_json())
+        assert res.get_json()["ok"] is True, res.get_json()
+        assert len(launched) == 1, "Record did not open the microphone"
 
         status = client.get("/api/status").get_json()
-        assert status["consent"]["given"] is False, status["consent"]
-        assert status["consent"]["statement"] == consent.statement()
-        assert client.get("/api/setup").get_json()["consent"]["given"] is False
+        assert "consent" not in status, status.get("consent")
+        assert status["recording"]["active"] is True, status["recording"]
+        assert "consent" not in client.get("/api/setup").get_json()
 
         form = {"openai_key": "sk-a", "anthropic_key": "sk-b", "device": "",
                 "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"}],
                 "notion": {"enabled": False}}
-        before = (setup_home / "schedule.toml").read_text() \
-            if (setup_home / "schedule.toml").exists() else None
-        for missing in ({}, {"consent": False}, {"consent": "yes"}):
-            res = client.post("/api/setup", json={**form, **missing})
-            assert res.status_code == 400, (missing, res.status_code)
-            assert res.get_json()["field"] == "consent", res.get_json()
-        after = (setup_home / "schedule.toml").read_text() \
-            if (setup_home / "schedule.toml").exists() else None
-        assert before == after, "a refused save still wrote the schedule"
-        assert not consent.given()
-
-        for bad in ({}, {"agree": False}, {"agree": "true"}, {"agree": 1}):
-            res = client.post("/api/consent", json=bad)
-            assert res.status_code == 400, (bad, res.status_code)
-            assert not consent.given(), f"{bad} counted as a yes"
-
-        res = client.post("/api/setup", json={**form, "consent": True})
+        res = client.post("/api/setup", json=form)
         assert res.status_code == 200, res.get_json()
-        data = consent.load()
-        assert data is not None and data["source"] == "panel", data
-        assert client.get("/api/setup").get_json()["consent"]["given"] is True
+        assert not (setup_home / "consent.json").exists(), "a save wrote an acknowledgment"
 
-        # The dashboard's own button, from scratch.
-        config.CONSENT_FILE.unlink()
-        res = client.post("/api/consent", json={"agree": True})
-        assert res.status_code == 200 and res.get_json()["given"] is True, res.get_json()
-        assert client.get("/api/status").get_json()["consent"]["given"] is True
-        assert consent.given()
+        assert client.post("/api/consent", json={"agree": True}).status_code in (404, 405)
+        checks = {c["name"] for c in client.get("/api/doctor").get_json()["checks"]}
+        assert "permission to record" not in checks, checks
 
-        # And the doctor line the Setup checkup shows follows it.
-        checks = {c["name"]: c for c in client.get("/api/doctor").get_json()["checks"]}
-        assert checks["permission to record"]["ok"] is True, checks["permission to record"]
+        for page in ("/", "/setup"):
+            html = client.get(page).get_data(as_text=True)
+            assert "permission to record" not in html.lower(), f"{page} still asks for permission"
+            assert 'id="consent' not in html, f"{page} still has the permission checkbox"
     finally:
+        for pid in _our_sleeps():
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except (OSError, ValueError):
+                pass
         gui.recording._ffmpeg_command = real_cmd
         gui._recorder = None
-        consent.record("panel")
-results.append(run("nothing records until permission to record is given, and each page can give it", t52))
+        config.RECORDING_STATE_FILE.unlink(missing_ok=True)
+results.append(run("recording starts with no permission checkbox or acknowledgment anywhere", t52))
 
 
 print()
