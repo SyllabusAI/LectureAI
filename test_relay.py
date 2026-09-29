@@ -924,6 +924,26 @@ def t27():
 results.append(run("a forged viewer is refused, and the name shown is the account's own", t27))
 
 
+def t28():
+    """The name shown follows the service (via /api/account), never the frame."""
+    account.save(ME)
+    saved = account.transport
+    account.transport = lambda m, u, h, b, t: (200, {"account": {"id": "a1", "email": "Renamed@Example.com"}})
+    try:
+        def shown(frame_email):
+            f = relay.serve(gui.app, req("/api/status", viewer={"email": frame_email, "account_id": "a1"}))
+            return json.loads(unb64(f))["signed_in_as"]
+        assert shown("attacker@evil.example") == "me@example.com"
+        frames = relay.serve(gui.app, req("/api/account"))
+        assert frames[0]["status"] == 200, frames[0]
+        assert account.load().email == "Renamed@Example.com"
+        assert shown("attacker@evil.example") == "renamed@example.com"
+    finally:
+        account.transport = saved
+        account.forget()
+results.append(run("the displayed email is refreshed by the service's answer, and a frame email is never shown", t28))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

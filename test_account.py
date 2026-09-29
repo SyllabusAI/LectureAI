@@ -941,6 +941,34 @@ def t_refresh_write_is_private():
 results.append(run("a refreshed Google token is written back 0600 even over a 0644 file", t_refresh_write_is_private))
 
 
+def t_whoami_refreshes_email():
+    class Me:
+        def __init__(self): self.reply = (200, {"account": {"id": "a1", "email": "new@example.com"}, "device": {"id": "d1"}})
+        def __call__(self, method, url, headers, body, timeout):
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return self.reply
+    def fresh_file():
+        reset()
+        account.save(account.Account("syd_abc", "a1", "old@example.com", "Me", "d1", "Mac", "syllabus", SERVICE, "x"))
+    me = Me()
+    fresh_file(); account.transport = me
+    assert account.whoami() == ("ok", "new@example.com")
+    assert account.load().email == "new@example.com" and account.load().token == "syd_abc"
+    assert stat.S_IMODE(config.ACCOUNT_FILE.stat().st_mode) == 0o600
+    # Unreachable, a 5xx, or a different account id: the file is left alone.
+    for reply in (ConnectionError("down"), (503, {}),
+                  (200, {"account": {"id": "OTHER", "email": "new@example.com"}})):
+        fresh_file(); me.reply = reply; account.transport = me
+        account.whoami()
+        assert account.load().email == "old@example.com", reply
+    # A 401 forgets the account as before; it never writes the email.
+    fresh_file(); me.reply = (401, {"error": "invalid_token"}); account.transport = me
+    assert account.whoami()[0] == "revoked" and account.load() is None
+    reset()
+results.append(run("whoami keeps the stored email current, and only from a 200 about this account", t_whoami_refreshes_email))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
