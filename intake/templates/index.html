@@ -525,6 +525,9 @@
   .ask button:disabled, .ask input:disabled { opacity: .45; cursor: not-allowed; }
   /* The conversation only takes up room once there is one. */
   .convo:empty { display: none; }
+  /* The app's window (pywebview) turns off text selection for the whole page,
+     so an answer could not be copied out. The conversation opts back in. */
+  .convo, .convo * { -webkit-user-select: text; user-select: text; cursor: text; }
   .bubble.ai { white-space: pre-wrap; }
   .bubble.ai strong { color: var(--ink); font-weight: 600; }
   .bubble.ai h2, .bubble.ai h3 {
