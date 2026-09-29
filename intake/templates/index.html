@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<script>
+<script nonce="{{ csp_nonce }}">
   // Inline and above the stylesheet on purpose: this has to run before the
   // first paint, otherwise the page shows the OS theme and then corrects.
   try {
@@ -18,7 +18,7 @@
     }
   } catch (e) { /* private windows can throw on localStorage; system theme is fine */ }
 </script>
-<style>
+<style nonce="{{ csp_nonce }}">
   :root {
     /* Two keywords means "whatever the OS says". The theme buttons narrow
        this to one, and every light-dark() token below follows, so switching
@@ -797,7 +797,7 @@
   </main>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 const $ = (id) => document.getElementById(id);
 let state = null;
 let busy = false;

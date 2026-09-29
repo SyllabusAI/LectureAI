@@ -299,7 +299,7 @@ def t15():
     # The saved theme must be applied before the stylesheet is parsed,
     # otherwise the page paints the OS theme first and visibly corrects.
     script = html.find("lectureai-theme")
-    style = html.find("<style>")
+    style = html.find("<style")
     assert script != -1 and style != -1, "missing script or style"
     assert script < style, "theme script runs after the stylesheet; page will flash"
 results.append(run("the saved theme is applied before first paint", t15))
@@ -1725,6 +1725,41 @@ def t52():
         gui._recorder = None
         config.RECORDING_STATE_FILE.unlink(missing_ok=True)
 results.append(run("recording starts with no permission checkbox or acknowledgment anywhere", t52))
+
+
+def t53():
+    import re
+    from intake import signin
+    seen = set()
+    for path in ("/", "/setup", "/api/status", "/nope"):
+        res = client.get(path)
+        csp = res.headers.get("Content-Security-Policy", "")
+        assert csp, f"{path} carries no Content-Security-Policy"
+        for want in ("default-src 'none'", "object-src 'none'", "base-uri 'none'",
+                     "frame-ancestors 'none'", "connect-src 'self'", "form-action 'self'"):
+            assert want in csp, f"{path}: {want!r} missing from {csp}"
+        assert "unsafe-inline" not in csp.replace("style-src-attr 'unsafe-inline'", ""), csp
+        assert "unsafe-eval" not in csp and "script-src 'self'" not in csp, csp
+        nonce = re.search(r"script-src 'nonce-([^']+)'", csp).group(1)
+        assert nonce not in seen, "a nonce was reused"
+        seen.add(nonce)
+        if path in ("/", "/setup"):
+            html = res.get_data(as_text=True)
+            # Every script and style element carries this response's nonce,
+            # and nothing else in the page could run.
+            tags = re.findall(r"<(?:script|style)\b[^>]*>", html)
+            assert len(tags) >= 3, tags
+            assert all(f'nonce="{nonce}"' in t for t in tags), tags
+            assert not re.search(r"<[a-z][^>]*\son[a-z]+\s*=", html), "an inline handler"
+            assert "javascript:" not in html
+            assert "srcdoc" not in html and "<iframe" not in html
+    # The policy names only the origins the pages use.
+    origins = set(re.findall(r"https://[^\s;']+", signin.content_security_policy("x")))
+    assert origins == {"https://fonts.googleapis.com", "https://fonts.gstatic.com"}, origins
+    # A refused request still gets a policy of its own.
+    refused = client.get("/api/status", headers={"Host": "evil.example"})
+    assert refused.status_code == 403 and "Content-Security-Policy" in refused.headers
+results.append(run("every panel answer carries a Content-Security-Policy with a fresh nonce that the pages use", t53))
 
 
 print()

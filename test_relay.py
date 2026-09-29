@@ -824,6 +824,35 @@ def t24():
         relay.state_file().unlink(missing_ok=True)
         account.forget()
 results.append(run("a welcome's address is believed only when it is a plain web address for this device", t24))
+def t25():
+    account.save(ME)
+    try:
+        import re
+        # The whitelist has to name the header, or a policy set inside the panel
+        # never reaches the browser that the relay answers.
+        assert "content-security-policy" in relay.RESPONSE_HEADERS
+        nonces = set()
+        for rid in ("a", "b"):
+            for path in ("/", "/setup"):
+                frames = relay.serve(gui.app, req(path, rid=rid))
+                head = frames[0]
+                assert head["status"] == 200, head["status"]
+                csp = head["headers"].get("Content-Security-Policy", "")
+                assert "default-src 'none'" in csp and "frame-ancestors 'none'" in csp, csp
+                nonce = re.search(r"script-src 'nonce-([^']+)'", csp).group(1)
+                nonces.add(nonce)
+                page = unb64(frames).decode()
+                # The page that came back through the relay uses the nonce the
+                # relayed header names, and links stay under the device's base.
+                assert f'<script nonce="{nonce}">' in page, "the relayed page does not carry the relayed nonce"
+                assert 'href="/p/d1/static/icon.png"' in page
+        assert len(nonces) == 4, "each relayed response has its own nonce"
+        # A refusal from the gate is relayed with a policy too.
+        refused = relay.serve(gui.app, req("/", viewer={"email": "other@example.com", "account_id": "zz"}))
+        assert refused[0]["status"] == 403 and "Content-Security-Policy" in refused[0]["headers"], refused[0]
+    finally:
+        account.forget()
+results.append(run("the panel's Content-Security-Policy survives the relay, with a fresh nonce for each response", t25))
 
 
 

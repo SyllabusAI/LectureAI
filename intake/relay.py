@@ -63,7 +63,9 @@ PANEL_PREFIX = "/p/"
 # Only these travel from the browser to the panel; the service already
 # strips the rest, and this is the second fence.
 REQUEST_HEADERS = {"content-type", "accept", "accept-language", "if-none-match", "if-modified-since"}
-RESPONSE_HEADERS = {"content-type", "cache-control", "etag", "last-modified", "location", "vary", "content-language"}
+RESPONSE_HEADERS = {"content-type", "cache-control", "etag", "last-modified", "location", "vary", "content-language",
+                    # The panel's own policy; signin._security_headers sets it.
+                    "content-security-policy"}
 
 DEFAULT_CHUNK_BYTES = 256 * 1024
 PING_SECONDS = 30
