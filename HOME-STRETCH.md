@@ -14,8 +14,11 @@ conflicts with arithmetic. Both are addressed below rather than deferred.
 
 1. **V3 by launch, launch by October 10, at 8 hours a week.** The remaining
    work is roughly 90 hours. Eight hours a week puts an unqualified launch in
-   early December, not October. The fix is a two-stage launch, below, which
-   preserves the October date, the 25-user target, and V3.
+   early December, not October. The fix at the time was a two-stage launch: a
+   free founding cohort on October 13, then the paid launch in November.
+   (SUPERSEDED 2026-09-29. P4 through P7 shipped faster than 8 hours a week,
+   so the stages were folded into one paid launch on **Monday October 12**.
+   See "One launch, October 12" below.)
 2. **Pro at $22 with the study assistant loses money.** With current Anthropic
    pricing, a full-course study session costs more than an eighth of the
    monthly subscription. The tier table below is rebuilt with real numbers.
@@ -28,30 +31,31 @@ Everything else in the answers holds and is locked.
 
 ---
 
-## The two-stage launch
+## One launch, October 12
 
-### Stage 1: founding cohort, target Monday October 13
+Decided 2026-09-29. The plan used to launch in two stages: 25 invited users,
+free, on BYO keys from October 13, and the paid product in mid-November. Most
+of Stage 2 is built (managed keys, metering, Stripe in the sandbox, the three
+tiers, the study assistant on the service's key), so a free BYO cohort would
+now be testing a version of Syllabus nobody will buy. The two stages are one:
+the paid product, open to the public, on **Monday October 12**.
 
-Twenty-five users, invited, free. This is the "25 users total" win condition
-from the planning pass, and it needs none of the commercial machinery.
+- **What launches:** managed keys, metering, the three tiers, the 5-hour trial
+  with a card up front, top-ups, and the study assistant on Pro. BYO keys stay
+  in the app for development and are not sold or offered.
+- **What the founding cohort becomes:** friends and family on the 100%-off
+  promotion code, on the same product as everyone else. They are the first
+  people who are not us, so their first week is watched as closely as the
+  cohort's would have been.
+- **What it still needs:** everything Stage 1 needed (the signed app, the legal
+  and consent work, the security bar in full) plus Stripe in live mode. Those
+  are the critical path below, and most of what is left is outside the code.
 
-- Runs on **BYO keys**, which already works today. No proxy, no metering, no
-  Stripe, no tiers.
-- What it does need: the signed and notarized app, the legal and consent work,
-  self-serve deletion, and the security bar passed in full.
-- Roughly 32 hours of work. Four weeks at 8 hours a week lands October 13.
-
-Stage 1 exists to find out what breaks with people who are not you, before
-any money is involved. That is worth more than three extra weeks of features.
-
-### Stage 2: paid launch, target Monday November 17
-
-- Managed keys, metering, Stripe, the three tiers, and V3.
-- Roughly 58 further hours. Seven weeks at 8 hours a week.
-
-**Mid-November is better timing than October 10, not worse.** A study tool
-sells hardest during the ramp to finals. The week after fall break is the
-deadest point in a student's semester for adopting anything new.
+**The risk is the calendar, not the code.** Apple enrollment, Stripe
+activation, and the lawyer each run on someone else's clock. If one of them
+is not done by October 9, the launch slips as a whole; it does not split back
+into stages. The old plan's own point stands as the consolation: a study tool
+sells hardest in the ramp to finals, so a slip of a week or two costs little.
 
 ---
 
@@ -63,13 +67,13 @@ deadest point in a student's semester for adopting anything new.
 | Sous | Internal only. Never publicly listed. |
 | Free tier | None. A Stripe promotion code at 100% off is how friends and family get in. |
 | Trial | 5 hours of audio, card collected up front. |
-| Keys | Paid only. Managed keys are the product; BYO is the founding cohort only. |
+| Keys | Paid only. Managed keys are the product. BYO stays in the app for development, not for sale. |
 | Apple | Organization enrollment, existing D-U-N-S. Started 2026-09-15. |
 | Distribution | Direct download, Sparkle self-update. No Mac App Store. |
 | Landing page | Stays on maincoursemedia.com until Syllabus shows growth. |
 | Support | syllabus@maincoursemedia.com (see note below). |
 | Cut from launch | Diarization, Sous, multi-Mac support. |
-| Non-negotiable | Passes the security bar in full before Stage 1. |
+| Non-negotiable | Passes the security bar in full before launch. |
 
 ### On the entity question
 
@@ -214,7 +218,7 @@ $9.90 is the assistant and $6.75 is audio.
 **Read the Pro row as the gap to close, not as the plan.** $25 is published
 and the assistant it was priced on is not built. On today's deployed stack,
 which would run the assistant on Opus 5, $25 is a 29% margin. Sonnet 5 is what
-takes it to 53%. Nothing is being sold until November 17, so the price and the
+takes it to 53%. Nothing is being sold until October 12, so the price and the
 assistant have that long to meet.
 
 **With the assistant on Sonnet 5:**
@@ -304,8 +308,8 @@ subscribers, which is the bet.
 per-user variable cost and card fees, and nothing else. Not subtracted:
 Cloudflare and D1 (small but real), the deferred $99/year Apple signing,
 insurance, the $1.5k to $4k lawyer, support time, refunds, failed payments,
-churn, or any of Trace's hours. The founding cohort is free, so the 25-user
-row is $0 until the paid launch on November 17.
+churn, or any of Trace's hours. Friends and family on the 100%-off code are
+paid-tier cost with no revenue, so count them as marketing, not as users.
 
 **Two things make these conservative, and one makes them optimistic.**
 
@@ -347,36 +351,63 @@ at Starter, 4 at Standard, all of them at Pro.
 
 ## Critical path
 
-### Stage 1, to October 13
+### To October 12
 
-**P0. Apple and the app** (6 h, plus Apple's own clock, already running)
+Status as of 2026-09-29, 13 days out. **Outside the code** means only Trace or
+Liam can do it, and each one has a clock that is not ours.
+
+| When | Item | Who | State |
+|---|---|---|---|
+| Sep 30 | Apple Developer enrollment, $99 | Trace | Open. Declined 2026-09-17; signing and Sparkle wait on it |
+| Sep 30 | Stripe live mode: activate (EIN, bank), live prices incl. the $5 top-up, live webhook, customer portal, 100%-off code, Stripe Tax with the Texas registration | Trace | Open |
+| Sep 30 | A card on Groq, to reach the Developer plan | Trace | Open. Free plan caps everyone at 8 audio hours a day |
+| Sep 30 | Anthropic credit and auto-reload | Trace | Unconfirmed |
+| Oct 1 | Insurance broker call | Trace | Open |
+| Oct 1 | Privacy and terms to the lawyer | Liam | Drafted: syllabus-accounts #45 |
+| Oct 6 | Lawyer's changes in, #45 merged and live | Liam | Waits on the lawyer |
+| Oct 6 | Signing, notarization, and Sparkle in `release.yml` | Claude | Waits on Apple |
+| Oct 7 | Swap in the live Stripe price ids and secrets, deploy | Claude | Waits on Stripe |
+| Oct 8 | One full live-mode run: sign up, trial, pay, record, top up, refund, delete | Liam | Waits on the two above |
+| Oct 9 | Go or slip, decided on this table | Trace, Liam | |
+| Oct 12 | Un-hide the `/syllabus/` pages, deploy Pages by hand, announce | Claude, Liam | |
+
+**P0. Apple and the app** (6 h, plus Apple's own clock)
 - Complete organization enrollment.
 - Developer ID signing and notarization in `packaging/build.sh` and the
   release workflow.
-- Tag v0.2.0 and run the release workflow end to end. It has never run.
+- ~~Tag v0.2.0 and run the release workflow end to end.~~ Done: v0.2.0
+  through v0.5.1 were built by `release.yml`.
 - Wire Sparkle self-update.
 
 **P1. Legal and consent** (8 h)
 - Syllabus privacy policy and terms, hosted on the account service, naming
-  Main Course Media LLC and Texas governing law.
+  Main Course Media LLC and Texas governing law. **Drafted 2026-09-29**
+  (syllabus-accounts #45), with the no-training statement and 18+, awaiting
+  the lawyer. The old privacy page's "never come to this service" has been
+  false since P5 and is gone in the draft.
 - Point the Google Cloud project's privacy policy URL at the new page. It
   currently points at the agency policy, which never mentions Syllabus. That
   is a live re-review risk on a published project.
-- Blocking consent acknowledgment at setup: "I have permission to record."
-- Self-serve account deletion on the account page.
-- An explicit "we do not train on your data" statement, with the provider
-  settings confirmed to back it up.
-- 18+ in the ToS.
+- ~~Blocking consent acknowledgment at setup: "I have permission to record."~~
+  Shipped in 0.5.0 (#84), then **removed for 0.6.0** by decision 2026-09-29.
+  The terms carry it instead: Syllabus does not obtain consent from anyone
+  recorded, and the person recording is responsible for it
+  (syllabus-accounts #45).
+- ~~Self-serve account deletion on the account page.~~ Done
+  (syllabus-accounts #36).
+- Confirm each provider's settings back the no-training statement.
 - Lawyer review of all of the above.
 
 **P2. Security bar** (12 h): see the definition below.
 
-**P3. Cohort readiness** (6 h)
-- Opt-in crash reporting and log upload.
-- Self-hosted activation analytics on D1. No third-party pixel.
-- The invite and onboarding path for 25 people.
+**P3. Launch readiness** (6 h)
+- Opt-in crash reporting and log upload. Optional for October 12.
+- Self-hosted activation analytics on D1. No third-party pixel. Optional.
+- A content security policy on the account service's pages.
+- Close the gap where a cancellation Stripe never delivers leaves the plan's
+  allowance in place.
 
-### Stage 2, to November 17
+### Already built for the paid product
 
 **P4. Transcriber provider seam**. DONE 2026-09-15 (LectureAI #50)
 - A `TranscriptionProvider` protocol carrying `max_bytes`,
@@ -431,7 +462,8 @@ the starter buttons. What is NOT done, and is still P7's remaining work:
   instead of remaining a guess.
 
 **P8. Launch** (2 h)
-- Pricing page, cohort conversion, announcement.
+- Un-hide the `/syllabus/` pages (drop `noindex` and the sitemap and header
+  blocks, add nav links, PreOrder to InStock), deploy Pages by hand, announce.
 
 ---
 

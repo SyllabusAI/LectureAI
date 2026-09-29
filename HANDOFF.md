@@ -322,8 +322,8 @@ sandbox, so start it early.
 **Signing is deferred, and the download page is the workaround.** Apple
 organization verification completed and Trace declined the $99/year on
 2026-09-17; the revisit trigger is the first paying student or the first
-person who cannot install it, and it is needed anyway for Stage 1 per
-HOME-STRETCH. No codesigning identity exists on Trace's Mac, no
+person who cannot install it, and it is needed anyway for the October 12
+launch per HOME-STRETCH. No codesigning identity exists on Trace's Mac, no
 `SYLLABUS_CODESIGN_IDENTITY` variable and no certificate secrets on the repo;
 `build.sh` and `syllabus.spec` already read the identity variable, but
 `release.yml` describes signing only in a comment and has no codesign,
@@ -385,11 +385,13 @@ HOME-STRETCH.md (on Trace's Mac, not in git; see the top of this file) is the
 plan, written 2026-09-15 and updated through 2026-09-22. Read it for the
 economics and the security bar. The short version:
 
-**The launch plan.** Two stages. Stage 1, the founding cohort, target Monday
-**2026-10-13**: 25 invited users, free, on BYO keys, needing the signed app,
-the legal and consent work, self-serve deletion, and the security bar. Stage
-2, the paid launch, target Monday **2026-11-17**: managed keys, metering,
-Stripe, the three tiers, and the assistant. Pricing is decided: Starter $9 (15
+**The launch plan.** One paid launch, target Monday **2026-10-12**,
+decided 2026-09-29. The old plan's free BYO cohort on 10-13 and paid launch
+in November were folded together once managed keys, metering, Stripe, the
+tiers, and the assistant were built. It needs the signed app, the legal and
+consent work, the security bar, and Stripe in live mode; friends and family
+come in on the 100%-off code. HOME-STRETCH's "To October 12" table is the
+dated list. Pricing is decided: Starter $9 (15
 hr), Standard $15 (30 hr), Pro $25 (45 hr plus 15 assistant sessions),
 published on the site 2026-09-19. No free tier; friends and family get a
 100%-off promotion code. Trial is 5 hours with a card up front.
@@ -410,17 +412,19 @@ and `/proxy/assistant` with the session cap is in review (syllabus-accounts
 (deferred on cost), Developer ID signing and notarization in `build.sh` and
 `release.yml`, Sparkle self-update. P1: privacy policy and terms naming Main
 Course Media LLC, hosted on the account service; the Cloud project's privacy
-URL; a blocking "I have permission to record" consent; self-serve account
-deletion; a no-training statement; 18+; lawyer review. P2: the security bar
-as defined in the plan (threat model, rate limiting on unauthenticated
-endpoints, ASVS pass, CSRF confirmation, a `DRIVE_KEY` rotation procedure).
-P3: opt-in crash reporting, D1 activation analytics, the invite path. P8:
+URL; self-serve account deletion; a no-training statement; 18+; lawyer
+review. (The blocking "I have permission to record" click-through was built
+and then removed in 0.6.0: the Terms carry the user's responsibility for
+consent instead.) P2: the security bar as defined in the plan (threat model,
+rate limiting on unauthenticated endpoints, ASVS pass, CSRF confirmation, a
+`DRIVE_KEY` rotation procedure).
+P3: opt-in crash reporting and D1 activation analytics (both optional for launch), a CSP. P8:
 un-hide the pages, announce. Off the code path: the insurance broker call, the
 lawyer, a card on the Groq account, the top-up Price and Customer portal in
 Stripe, and measuring the escalation rate with real study weeks.
 
-Note the tension the plan itself names: Stage 1 requires the signed app, and
-signing is the one phase deferred. Enrolling Apple is the first thing on the
+Note the tension the plan itself names: the launch requires the signed app,
+and signing is the one phase deferred. Enrolling Apple is the first thing on the
 critical path.
 
 ---
