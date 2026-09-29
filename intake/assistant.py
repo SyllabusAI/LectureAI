@@ -1,8 +1,15 @@
 """Ask questions across the lectures already filed in Drive.
 
 The pipeline deletes a recording once its summary and transcript are safely
-uploaded, so everything the assistant can draw on lives in Drive and nowhere
-on this Mac. pipeline.log is the index: one line per filed lecture, carrying
+uploaded, so everything the assistant can draw on lives in Drive. Nothing the
+assistant reads is written to disk on this Mac: what it fetches is held in
+memory for CACHE_TTL_SECONDS so a follow-up question does not fetch it again,
+and is gone when the app quits, when the time is up, or when this Mac signs
+out. (Older versions kept a plaintext copy in a .assistant folder; it is
+deleted the first time the assistant runs.) What is written locally is
+pipeline.log, the index below, and assistant.log, which holds counts and
+lecture titles, never a question, an answer, or any lecture text.
+pipeline.log is the index: one line per filed lecture, carrying
 the course, the class date, the topic slug and the Doc's URL. This module
 turns that index into context, asks Claude, and streams the answer back.
 
@@ -35,6 +42,7 @@ import json
 import re
 import sys
 import time
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -186,25 +194,75 @@ def courses() -> list[dict]:
 # account, so the assistant works the moment it ships.
 
 
-def cache_dir() -> Path:
-    path = config.BASE_DIR / ".assistant"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+# How long text fetched from Drive is remembered, in memory only. Long enough
+# for a study session's follow-ups, short enough that closing the books on a
+# course does not leave it sitting in a running app. Measured from the fetch,
+# not from the last use, so a question every few minutes cannot keep it alive.
+CACHE_TTL_SECONDS = 30 * 60
+
+_MEMORY: dict[str, tuple[float, str]] = {}
+_legacy_swept = False
 
 
 def _cached(key: str) -> str | None:
-    path = cache_dir() / f"{key}.txt"
-    try:
-        return path.read_text()
-    except OSError:
+    entry = _MEMORY.get(key)
+    if entry is None:
         return None
+    stored, text = entry
+    if time.monotonic() - stored >= CACHE_TTL_SECONDS:
+        _MEMORY.pop(key, None)
+        return None
+    return text
 
 
 def _cache(key: str, text: str) -> None:
-    try:
-        (cache_dir() / f"{key}.txt").write_text(text)
-    except OSError:
-        pass      # a cache that cannot be written is slow, not broken
+    now = time.monotonic()
+    for old in [k for k, (stored, _) in _MEMORY.items() if now - stored >= CACHE_TTL_SECONDS]:
+        del _MEMORY[old]
+    _MEMORY[key] = (now, text)
+
+
+def remove_legacy_cache() -> None:
+    """Delete the plaintext `.assistant` folders that older versions left behind.
+
+    They held every summary and transcript the assistant had ever fetched, in
+    files anyone with access to the account could read, with no expiry. Looked
+    for in the active home and in every profile's home, plus the root, where
+    the layout from before profiles kept it.
+    """
+    from intake import profiles
+    homes = {config.BASE_DIR, config.ROOT_DIR}
+    homes.update(config.profile_home(p) for p in profiles.PROFILES.values())
+    for home in homes:
+        target = home / ".assistant"
+        try:
+            if target.is_symlink():
+                target.unlink()
+            elif target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+        except OSError:
+            pass      # nothing to fetch a second time is worth failing a question over
+
+
+def sweep_legacy_once() -> None:
+    """remove_legacy_cache(), the first time this process asks for it."""
+    global _legacy_swept
+    if not _legacy_swept:
+        _legacy_swept = True
+        remove_legacy_cache()
+
+
+def clear_cache() -> None:
+    """Forget everything held for the assistant: fetched text and session ids.
+
+    Called when this Mac signs out or its sign-in is revoked, so the next
+    person to use it starts with nothing of the last one's.
+    """
+    global _legacy_swept
+    _MEMORY.clear()
+    _SESSIONS.clear()
+    remove_legacy_cache()
+    _legacy_swept = True
 
 
 # Native Google formats are exported; anything else is downloaded as it is.
@@ -218,10 +276,10 @@ def _decode(raw) -> str:
 def summary_text(service, lec: Lecture) -> str:
     """One lecture's summary as plain text, whatever Drive is holding it as.
 
-    Cached on disk under the file's id. A summary is rewritten only when the
-    lecture is processed again, which files a new line in the log, so a stale
-    cache entry is not a case that arises in practice; the id changes with the
-    document.
+    Remembered in memory under the file's id for CACHE_TTL_SECONDS. A summary
+    is rewritten only when the lecture is processed again, which files a new
+    line in the log, so a stale entry is not a case that arises in practice;
+    the id changes with the document.
 
     Not every filed summary is a Doc. Lectures from before the pipeline
     started converting on upload are still sitting in Drive as text/markdown,
@@ -447,6 +505,8 @@ def ask(question: str, course: str, *, service=None, client=None):
     if not question:
         yield {"type": "error", "text": "Ask a question first."}
         return
+
+    sweep_legacy_once()
 
     lectures = [l for l in library() if l.course == course]
     if not lectures:

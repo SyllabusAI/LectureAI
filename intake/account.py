@@ -119,6 +119,12 @@ def forget() -> None:
         config.ACCOUNT_FILE.unlink(missing_ok=True)
     except OSError:
         pass
+    # What the study assistant fetched for this account goes with the account.
+    try:
+        from intake import assistant
+        assistant.clear_cache()
+    except Exception as exc:  # noqa: BLE001 - signing out must not fail on housekeeping
+        _say(f"could not clear the assistant's cache: {exc}")
 
 
 def device_name() -> str:
