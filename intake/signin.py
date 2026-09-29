@@ -22,6 +22,7 @@ retired on 2026-09-15, and that code went with them.
 
 from __future__ import annotations
 
+import html
 import secrets
 
 from flask import Flask, g, jsonify, request
@@ -32,7 +33,7 @@ from intake import account, config, relay
 def _page(message: str, code: int = 200):
     return (f"<!doctype html><title>{config.PROFILE.title}</title>"
             f"<div style='font: 15px/1.5 system-ui; max-width: 40em; margin: 4em auto'>"
-            f"<p>{message}</p></div>"), code
+            f"<p>{html.escape(message)}</p></div>"), code
 
 
 def refuse(code: int, message: str):
@@ -144,12 +145,20 @@ def relay_viewer() -> str:
     The service only relays the owner, so a mismatch means account.json
     changed under a socket that belonged to the previous account. Nobody
     then.
+
+    Ownership is the account id, and it has to be a real one: a missing id
+    on both sides is not a match. The email in the frame is only required to
+    be present; what is shown is the email this Mac's own account.json holds,
+    never the frame's, so a frame with the right id and a spoofed email
+    cannot put a name of its choosing on the page.
     """
     acct = account.load() if account.enabled() else None
     email = str(request.environ.get(relay.VIEWER_KEY, "")).lower()
-    if acct is None or not email:
+    if acct is None or not email or not acct.account_id:
         return ""
-    return email if request.environ.get(relay.VIEWER_ACCOUNT_KEY) == acct.account_id else ""
+    if request.environ.get(relay.VIEWER_ACCOUNT_KEY) != acct.account_id:
+        return ""
+    return (acct.email or email).lower()
 
 
 def gate():
@@ -223,12 +232,37 @@ def content_security_policy(nonce: str) -> str:
     ])
 
 
+#: Sent on every answer. Content-Security-Policy is separate because it
+#: carries a per-response nonce. Every name here (and the CSP) must also be in
+#: relay.RESPONSE_HEADERS, which silently drops what it does not list.
+STATIC_SECURITY_HEADERS = {
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    # The panel records through the Mac app, not the browser: no page calls
+    # getUserMedia, so the microphone is denied along with everything else.
+    "Permissions-Policy": ("accelerometer=(), autoplay=(), camera=(), display-capture=(), "
+                           "geolocation=(), gyroscope=(), magnetometer=(), microphone=(), "
+                           "midi=(), payment=(), usb=()"),
+    "X-Permitted-Cross-Domain-Policies": "none",
+}
+
+#: Only over the relay, which is https on the web. The local panel is plain
+#: http on 127.0.0.1, where the header would be ignored at best.
+HSTS = "max-age=31536000; includeSubDomains"
+
+
 def _security_headers(response):
     """Put the policy on every answer. relay.RESPONSE_HEADERS must name
-    Content-Security-Policy too, or the relay drops it on the way out."""
+    Content-Security-Policy and every header below too, or the relay drops
+    them on the way out."""
     nonce = getattr(g, "csp_nonce", "")
     if nonce:
         response.headers["Content-Security-Policy"] = content_security_policy(nonce)
+    for name, value in STATIC_SECURITY_HEADERS.items():
+        response.headers[name] = value
+    if via_relay():
+        response.headers["Strict-Transport-Security"] = HSTS
     return response
 
 
