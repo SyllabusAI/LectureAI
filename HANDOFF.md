@@ -410,10 +410,12 @@ and `/proxy/assistant` with the session cap is in review (syllabus-accounts
 (deferred on cost), Developer ID signing and notarization in `build.sh` and
 `release.yml`, Sparkle self-update. P1: privacy policy and terms naming Main
 Course Media LLC, hosted on the account service; the Cloud project's privacy
-URL; a blocking "I have permission to record" consent; self-serve account
-deletion; a no-training statement; 18+; lawyer review. P2: the security bar
-as defined in the plan (threat model, rate limiting on unauthenticated
-endpoints, ASVS pass, CSRF confirmation, a `DRIVE_KEY` rotation procedure).
+URL; self-serve account deletion; a no-training statement; 18+; lawyer
+review. (The blocking "I have permission to record" click-through was built
+and then removed in 0.6.0: the Terms carry the user's responsibility for
+consent instead.) P2: the security bar as defined in the plan (threat model,
+rate limiting on unauthenticated endpoints, ASVS pass, CSRF confirmation, a
+`DRIVE_KEY` rotation procedure).
 P3: opt-in crash reporting, D1 activation analytics, the invite path. P8:
 un-hide the pages, announce. Off the code path: the insurance broker call, the
 lawyer, a card on the Groq account, the top-up Price and Customer portal in

@@ -6,6 +6,8 @@ checkout is read or written. From the project root:
 
     .venv/bin/python test_setup.py
 """
+import contextlib
+import io
 import os
 import stat
 import sys
@@ -19,7 +21,7 @@ from _test_home import SAMPLE_SCHEDULE, fresh_home  # noqa: E402
 
 HOME = fresh_home()  # before config is imported
 
-from intake import __version__, cli, config, consent, doctor, setup_wizard  # noqa: E402
+from intake import cli, config, doctor, setup_wizard  # noqa: E402
 
 # The migration check looks for an older install next to the code, and during
 # tests "the code" is this checkout, which really does have one. Point it at
@@ -250,11 +252,12 @@ def t13():
         "Mon 9 ENTR-4306",
         "",                            # blank line ends the schedule
         "n",                           # no Notion
-        "y",                           # permission to record
     ])
     assert w.run() == 0
     assert script.answers == [], f"unused answers: {script.answers}"
-    assert consent.given(home), "a yes to permission to record was not kept"
+    # No permission-to-record question (removed in 0.6.0), and no file for it.
+    assert not any("permission" in p.lower() for p in script.prompts), script.prompts
+    assert not (home / "consent.json").exists()
 
     env = setup_wizard.read_env(home / ".env")
     assert env["OPENAI_API_KEY"] == "sk-openai-test-key-000000", env
@@ -273,14 +276,12 @@ results.append(run("first run writes .env and schedule.toml into the home", t13)
 
 def t14():
     home = Path(tempfile.mkdtemp())
-    w, _ = wizard(home, ["k1", "k2", "1", "Tue 14 ACCT-4321", "", "n", "y"])
+    w, _ = wizard(home, ["k1", "k2", "1", "Tue 14 ACCT-4321", "", "n"])
     assert w.run() == 0
-    for name in (".env", "consent.json"):
-        mode = stat.S_IMODE((home / name).stat().st_mode)
-        assert mode == 0o600, (name, oct(mode))
+    mode = stat.S_IMODE((home / ".env").stat().st_mode)
+    assert mode == 0o600, oct(mode)
     written = {p.name for p in home.iterdir()}
-    assert written == {".env", "schedule.toml", "consent.json", "inbox", "processed",
-                       ".work"}, written
+    assert written == {".env", "schedule.toml", "inbox", "processed", ".work"}, written
     assert not any(FAKE_CODE_ROOT.iterdir().__next__().name == ".env"
                    for _ in [0]), "wrote into the code directory"
     assert not (config.PACKAGE_DIR / ".env").exists()
@@ -291,7 +292,7 @@ results.append(run(".env is private to the user and nothing lands in the code di
 def t15():
     home = Path(tempfile.mkdtemp())
     w, _ = wizard(home, ["sk-first-key-0000000000", "sk-ant-first-000000000", "1",
-                         "Tue 14 ACCT-4321", "Fri 12 RELI-3304", "", "n", "y"])
+                         "Tue 14 ACCT-4321", "Fri 12 RELI-3304", "", "n"])
     assert w.run() == 0
     (home / ".env").write_text((home / ".env").read_text()
                                + "\nDRIVE_PARENT_FOLDER_ID=folder123\n")
@@ -309,59 +310,7 @@ def t15():
     assert len(loaded.meetings) == 2, loaded
     # The full keys are shown masked, never in the clear.
     assert "sk-ant-first-000000000" not in "".join(script.prompts + script.said)
-    # Asked once per profile, not on every run.
-    assert not any("permission" in p.lower() for p in script.prompts), script.prompts
-    assert "Permission to record: confirmed" in script.output(), script.output()
 results.append(run("rerunning changes one value and keeps the rest, keys masked", t15))
-
-
-def t15b():
-    # Enter is a no here, unlike every other prompt: agreeing by accident is
-    # the one answer that must not happen. A no still saves the rest.
-    home = Path(tempfile.mkdtemp())
-    w, script = wizard(home, ["k1", "k2", "1", "Tue 14 ACCT-4321", "", "n", ""])
-    assert w.run() == 0
-    assert script.answers == [], script.answers
-    assert (home / ".env").exists() and (home / "schedule.toml").exists()
-    assert not consent.given(home) and not (home / "consent.json").exists()
-    assert "intake setup --consent" in script.output(), script.output()
-    assert consent.statement() in script.output(), "the words agreed to were never shown"
-
-    # `intake setup --consent` asks only that, and a yes is kept with when,
-    # from where, and by which version.
-    w, script = wizard(home, ["yes"])
-    assert w.run_consent_only() == 0
-    assert script.answers == [] and len(script.prompts) == 1, script.prompts
-    data = consent.load(home)
-    assert data is not None, "a yes was not kept"
-    assert data["agreed"] is True and data["version"] == consent.VERSION, data
-    assert data["source"] == "setup" and data["app_version"] == __version__, data
-    assert data["statement"] == consent.statement(), data
-    assert datetime.fromisoformat(data["agreed_at"]).tzinfo is not None, data
-    # Asking again once it is on file asks nothing.
-    w, script = wizard(home, [])
-    assert w.run_consent_only() == 0 and script.prompts == [], script.prompts
-
-    # A no from --consent is a failed command, so a script can tell.
-    other = Path(tempfile.mkdtemp())
-    w, _ = wizard(other, ["n"])
-    assert w.run_consent_only() == 1 and not consent.given(other)
-results.append(run("permission to record needs a real yes, is asked once, and has its own command", t15b))
-
-
-def t15c():
-    # A file that does not say yes, for this version of the words, is no
-    # acknowledgment at all: the safe reading of a broken file is to ask again.
-    home = Path(tempfile.mkdtemp())
-    target = home / "consent.json"
-    for text in ("", "not json", "[]", '{"agreed": "yes", "version": 1}',
-                 '{"agreed": true}', '{"agreed": true, "version": 0}',
-                 '{"agreed": true, "version": true}', '{"agreed": false, "version": 1}'):
-        target.write_text(text)
-        assert not consent.given(home), f"{text!r} counted as permission to record"
-    target.write_text('{"agreed": true, "version": %d}' % consent.VERSION)
-    assert consent.given(home)
-results.append(run("only a clear yes to the current words counts as permission", t15c))
 
 
 def t16():
@@ -375,7 +324,6 @@ def t16():
         "y",                           # Notion yes
         "ntn_secret_000000000000",
         "https://www.notion.so/me/Tasks-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6?v=x",
-        "y",                           # permission to record
     ])
     assert w.run() == 0
     out = script.output()
@@ -391,7 +339,7 @@ results.append(run("bad schedule rows are re-asked, and Notion can be set up", t
 
 def t17():
     home = Path(tempfile.mkdtemp())
-    w, script = wizard(home, ["k1", "k2", "Tue 14 ACCT-4321", "", "n", "y"], devices=[])
+    w, script = wizard(home, ["k1", "k2", "Tue 14 ACCT-4321", "", "n"], devices=[])
     assert w.run() == 0
     assert script.answers == [], script.answers
     env = setup_wizard.read_env(home / ".env")
@@ -402,7 +350,7 @@ results.append(run("with no devices to list, setup keeps going with the default 
 
 def t17b():
     home = Path(tempfile.mkdtemp())
-    w, _ = wizard(home, ["k1", "k2", "macbook", "Tue 14 ACCT-4321", "", "n", "y"])
+    w, _ = wizard(home, ["k1", "k2", "macbook", "Tue 14 ACCT-4321", "", "n"])
     assert w.run() == 0
     env = setup_wizard.read_env(home / ".env")
     # A substring that picks out one device is stored as that device's name.
@@ -881,25 +829,20 @@ def t33():
 results.append(run("no secret is written with a plain write_text", t33))
 
 
-def t_consent_doctor():
-    # The doctor and the Setup checkup say whether this Mac may record, and
-    # how to fix it in each place. Required: without it nothing records.
-    config.CONSENT_FILE.unlink(missing_ok=True)
-    missing = doctor.check_consent()
-    assert not missing.ok and missing.required, missing
-    assert missing.name == "permission to record", missing.name
-    assert missing.fix == "intake setup --consent", missing.fix
-    assert "I have permission to record" in missing.fix_web, missing.fix_web
-    assert "permission to record" in [c.name for c in doctor.run_checks()]
-    assert "fix: intake setup --consent" in doctor.render([missing])
+def t_no_permission_check():
+    # Permission to record is no longer something the doctor checks, or that
+    # setup has a flag for: the click-through was removed in 0.6.0.
+    names = [c.name for c in doctor.run_checks()]
+    assert "permission to record" not in names, names
+    assert not hasattr(doctor, "check_consent")
     try:
-        consent.record("setup")
-        given = doctor.check_consent()
-        assert given.ok, given
-        assert given.detail.startswith("confirmed on 20"), given.detail
-    finally:
-        config.CONSENT_FILE.unlink(missing_ok=True)
-results.append(run("doctor reports permission to record, and the command that fixes it", t_consent_doctor))
+        with contextlib.redirect_stderr(io.StringIO()):
+            setup_wizard.main(["--consent"])
+    except SystemExit as exc:
+        assert exc.code == 2, exc.code
+    else:
+        raise AssertionError("intake setup --consent is still accepted")
+results.append(run("no permission-to-record check in doctor, and no setup --consent", t_no_permission_check))
 
 
 print()

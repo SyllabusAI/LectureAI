@@ -70,6 +70,10 @@ Apple gates only P7. Everything else can run now.
 | 8 | Security bar, panel | LectureAI | `trace-J/security-panel` | 3, 5 |
 | 9 | Signing and release | LectureAI | `trace-J/signing` | Apple |
 
+Slice 6 no longer includes an in-app "I have permission to record"
+click-through: that gate was removed from the app in 0.6.0, and the Terms
+carry the user's responsibility for consent.
+
 **1 and 2 are safe to run at the same time.** Different repos, no shared
 files, no dependency. That is the one genuinely parallel pair; everything
 after it wants the previous slice merged first.

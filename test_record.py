@@ -16,7 +16,6 @@ from _test_home import fresh_home  # noqa: E402
 fresh_home()  # before config is imported, so nothing touches ~/.intake
 
 from intake import config  # noqa: E402
-from intake import consent  # noqa: E402
 from intake import record  # noqa: E402
 
 # Real output from `ffmpeg -f avfoundation -list_devices true -i ""`, including
@@ -301,7 +300,6 @@ results.append(run("a live pid that is not our ffmpeg is not adopted", t16))
 
 def t17():
     reset()
-    consent.record("setup")
     # start() records what it launched, without launching anything here.
     launched = []
 
@@ -350,10 +348,13 @@ results.append(run("start writes the state file the next process will read", t17
 
 
 def t17b():
-    # Permission to record is checked where every recording begins, so no
-    # front end can skip it, and nothing is launched when it is missing.
+    # There is no permission click-through before recording (removed in
+    # 0.6.0; the Terms carry the user's responsibility for consent). A fresh
+    # home with nothing acknowledged starts a recording straight away, and
+    # starting one writes no acknowledgment file either.
     reset()
-    config.CONSENT_FILE.unlink(missing_ok=True)
+    assert not hasattr(config, "CONSENT_FILE"), "the permission file is back in config"
+    before = {p.name for p in config.HOME_DIR.iterdir()}
     launched = []
 
     class FakePopen:
@@ -368,37 +369,17 @@ def t17b():
     record.tools.find = lambda name, env=None: f"/opt/homebrew/bin/{name}"
     record.list_devices = fake_devices
     try:
-        try:
-            record.Recorder(course="RELI-3304").start(max_minutes=90)
-        except consent.ConsentRequired as exc:
-            assert "intake setup --consent" in str(exc), exc
-            assert "permission to record" in str(exc), exc
-        else:
-            raise AssertionError("a recording started without permission to record")
-        assert launched == [], f"something was launched anyway: {launched}"
-        assert record._read_state() is None, "a refused start left a state file"
-
-        # `intake record` says so up front, with the exact command, and fails.
-        said = []
-        real_log = record.log
-        record.log = said.append
-        try:
-            assert record.main([]) == 1
-        finally:
-            record.log = real_log
-        assert launched == [], launched
-        assert any("intake setup --consent" in line for line in said), said
-
-        # Once it is on file the same start goes ahead.
-        consent.record("setup")
         rec = record.Recorder(course="RELI-3304")
         rec.start(max_minutes=90)
         assert [Path(c[0]).name for c in launched] == ["ffmpeg"], launched
+        assert record._read_state() is not None, "the recording did not start"
         rec._errors.unlink(missing_ok=True)
+        after = {p.name for p in config.HOME_DIR.iterdir()}
+        assert "consent.json" not in after - before, "starting wrote an acknowledgment"
     finally:
         record.subprocess.Popen, record.tools.find = real_popen, real_find
         reset()
-results.append(run("no recording starts until permission to record is on file", t17b))
+results.append(run("a recording starts without any permission acknowledgment", t17b))
 
 
 def t18():
