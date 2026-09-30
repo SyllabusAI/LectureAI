@@ -238,6 +238,17 @@ thing it stores of its own is the list of classes that did not meet, below:
   answers questions and builds study guides from every transcript and
   summary in Drive. Nothing in it is wired up yet, and it says so.
 
+The first time a configured dashboard opens in a browser, a **guided tour**
+walks through it one card at a time: Record, the course picker, This week,
+the watcher, the tiles, the recent list, the study assistant, and Setup. A
+ring frames each card and the rest of the page dims. Arrow keys move, Esc
+closes, and **Tour** in the rail replays it. Finishing or skipping it is
+remembered in that browser (`syllabus-tour-seen` in localStorage), so the
+phone address gets its own first look. A stop whose card is not on the page
+is left out. The last stop links to the student guide at
+`maincoursemedia.com/syllabus/guide/`, which covers the same ground in full;
+Sous has no guide, so its tour ends without the link.
+
 Each course has a color, assigned in schedule order so it does not change
 from week to week. The six colors were run through a colorblind-safety
 check against both card surfaces, and identity never rests on color alone:
