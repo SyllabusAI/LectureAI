@@ -28,6 +28,7 @@ pipeline.log
 # the release workflow reads this one out of the checkout
 !packaging/release-notes.md
 !SECURITY.md
+!docs/signing.md
 !HANDOFF.md
 !HANDOFF-STRIPE.md
 !HOME-STRETCH.md
