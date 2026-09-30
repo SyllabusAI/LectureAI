@@ -552,4 +552,18 @@ await run("a relayed page writes every request under its device path", async () 
   await page.close();
 });
 
+// --- The lid: sleep ends a recording, and caffeinate cannot stop it --------
+
+await run("the Setup page warns not to close the lid while recording", async () => {
+  const page = loadPage(DIR, "setup.html", { routes: setupRoutes() });
+  await page.window.load();
+  await page.settle();
+  const warning = page.$("lidWarning");
+  assert(warning, "the Setup page has no lid warning");
+  assert(!warning.hidden, "the lid warning is hidden");
+  assert(/close the lid while recording/i.test(warning.textContent),
+    `the lid warning does not say what to avoid: ${warning.textContent}`);
+  await page.close();
+});
+
 finish();

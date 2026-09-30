@@ -131,6 +131,10 @@
   .check-name { font-weight: 500; min-width: 140px; }
   .check-detail { color: var(--muted); font-weight: 300; word-break: break-word; }
   .check-fix { color: var(--warn); font-weight: 400; margin-top: 2px; }
+  .lid-warning { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid var(--warn);
+    border-radius: 6px; background: color-mix(in srgb, var(--warn) 10%, transparent);
+    font-size: 13px; line-height: 1.5; }
+  .lid-warning strong { color: var(--warn); }
   .cal { padding: 14px 0; border-top: 1px solid var(--line); }
   .cal:first-child { border-top: none; padding-top: 4px; }
   .cal .hint { margin-top: 4px; }
@@ -211,6 +215,12 @@
         <button type="button" class="btn small" id="refreshDevices">Refresh</button>
       </div>
       <div class="hint" id="deviceHint"></div>
+      <p class="lid-warning" id="lidWarning">
+        <strong>Don't close the lid while recording.</strong> Closing it puts your Mac
+        to sleep, and the recording stops there. Press Stop first, then close it.
+        A dimmed or sleeping screen is fine: {{ profile.title }} keeps the Mac awake
+        for as long as it records.
+      </p>
     </div>
 
     <!-- 3. Schedule -->
