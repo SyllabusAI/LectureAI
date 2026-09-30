@@ -171,7 +171,7 @@ def t9():
     assert summarize.fallback_slug() == "Lecture-Notes"
     assert summarize.slugify_topic("") == "Lecture-Notes"
     assert summarize.user_message("words", "ACCT-4321", "2026-09-06").startswith(
-        "Course: ACCT-4321\nDate: 2026-09-06\n\nLecture transcript:\n\nwords")
+        "Course: ACCT-4321\nDate: 2026-09-06\n\nLecture transcript:\n\n<transcript>\nwords\n</transcript>")
     assert summarize.SYSTEM_PROMPT == schemas.LECTURE_SYSTEM_PROMPT
     assert summarize.LectureSummary is schemas.LectureSummary
     assert summarize.ACTION_KINDS == {"assignment", "reading", "quiz", "exam", "project", "other"}

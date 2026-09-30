@@ -51,7 +51,17 @@ Date: {date}
 
 {kind} transcript:
 
-{transcript}"""
+<transcript>
+{transcript}
+</transcript>"""
+
+
+_CLOSING_TAG = re.compile(r"</(\s*)transcript", re.IGNORECASE)
+
+
+def _fence(text: str) -> str:
+    """Break up a literal closing tag so the transcript cannot end its own block early."""
+    return _CLOSING_TAG.sub(r"<\\/\1transcript", text)
 
 
 def user_message(transcript: str, course: str, date: str) -> str:
@@ -59,7 +69,7 @@ def user_message(transcript: str, course: str, date: str) -> str:
     return USER_TEMPLATE.format(
         label=config.PROFILE.subject_label, course=course, date=date,
         kind=config.PROFILE.filename_prefix.capitalize(),
-        transcript=transcript.strip(),
+        transcript=_fence(transcript.strip()),
     )
 
 

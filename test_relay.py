@@ -824,8 +824,124 @@ def t24():
         relay.state_file().unlink(missing_ok=True)
         account.forget()
 results.append(run("a welcome's address is believed only when it is a plain web address for this device", t24))
+def t25():
+    account.save(ME)
+    try:
+        import re
+        # The whitelist has to name the header, or a policy set inside the panel
+        # never reaches the browser that the relay answers.
+        assert "content-security-policy" in relay.RESPONSE_HEADERS
+        nonces = set()
+        for rid in ("a", "b"):
+            for path in ("/", "/setup"):
+                frames = relay.serve(gui.app, req(path, rid=rid))
+                head = frames[0]
+                assert head["status"] == 200, head["status"]
+                csp = head["headers"].get("Content-Security-Policy", "")
+                assert "default-src 'none'" in csp and "frame-ancestors 'none'" in csp, csp
+                nonce = re.search(r"script-src 'nonce-([^']+)'", csp).group(1)
+                nonces.add(nonce)
+                page = unb64(frames).decode()
+                # The page that came back through the relay uses the nonce the
+                # relayed header names, and links stay under the device's base.
+                assert f'<script nonce="{nonce}">' in page, "the relayed page does not carry the relayed nonce"
+                assert 'href="/p/d1/static/icon.png"' in page
+        assert len(nonces) == 4, "each relayed response has its own nonce"
+        # A refusal from the gate is relayed with a policy too.
+        refused = relay.serve(gui.app, req("/", viewer={"email": "other@example.com", "account_id": "zz"}))
+        assert refused[0]["status"] == 403 and "Content-Security-Policy" in refused[0]["headers"], refused[0]
+    finally:
+        account.forget()
+results.append(run("the panel's Content-Security-Policy survives the relay, with a fresh nonce for each response", t25))
 
 
+
+
+def t26():
+    from intake import signin
+    account.save(ME)
+    try:
+        want = {"x-frame-options": "DENY", "x-content-type-options": "nosniff",
+                "referrer-policy": "same-origin", "x-permitted-cross-domain-policies": "none"}
+        assert want.items() <= {k.lower(): v for k, v in signin.STATIC_SECURITY_HEADERS.items()}.items()
+        for path, viewer in (("/", None), ("/api/status", None), ("/nope", None),
+                             ("/", {"email": "other@example.com", "account_id": "zz"})):
+            head = relay.serve(gui.app, req(path, viewer=viewer))[0]
+            got = {k.lower(): v for k, v in head["headers"].items()}
+            for name, value in want.items():
+                assert got.get(name) == value, f"{path}: {name} did not survive the relay ({got.get(name)!r})"
+            assert "camera=()" in got.get("permissions-policy", ""), f"{path}: no Permissions-Policy over the relay"
+            assert got.get("strict-transport-security", "").startswith("max-age="), f"{path}: no HSTS over the relay"
+            assert "includesubdomains" in got["strict-transport-security"].lower()
+            assert "default-src 'none'" in got.get("content-security-policy", ""), "CSP lost"
+    finally:
+        account.forget()
+results.append(run("each security header, HSTS included, survives the relay", t26))
+
+
+def t27():
+    """Forged viewers: the panel shows this Mac's own account, or refuses."""
+    account.save(ME)
+    try:
+        def seen(viewer, headers=None):
+            frames = relay.serve(gui.app, req("/api/status", viewer=viewer, headers=headers))
+            status = frames[0]["status"]
+            return status, (json.loads(unb64(frames)) if status == 200 else None)
+        # The right id with a spoofed email: allowed in (the id is what proves
+        # ownership) but the page is told the account's own email, not the frame's.
+        status, body = seen({"email": "attacker@evil.example", "account_id": "a1"})
+        assert status == 200 and body["signed_in_as"] == "me@example.com", (status, body)
+        # Right email, wrong or missing or empty account id: refused.
+        for viewer in ({"email": "me@example.com", "account_id": "a2"},
+                       {"email": "me@example.com"},
+                       {"email": "me@example.com", "account_id": ""},
+                       {"account_id": "a1"},
+                       {"email": "", "account_id": "a1"},
+                       {"email": None, "account_id": None},
+                       {"email": "me@example.com", "account_id": "A1"},
+                       {"email": "me@example.com", "account_id": "a1 "}):
+            assert seen(viewer)[0] == 403, viewer
+        # Identity headers a browser sends do nothing; they are not on the request whitelist.
+        forged = {"Intake-Viewer": "me@example.com", "Intake-Viewer-Account": "a1",
+                  "X-Forwarded-For": "127.0.0.1", "Host": "localhost", "Origin": "http://localhost",
+                  "Sec-Fetch-Site": "same-origin", "Cookie": "x=1"}
+        assert seen({"email": "x@example.com", "account_id": "a2"}, forged)[0] == 403
+        # Header names and values that try to inject a second header or line.
+        status, body = seen({"email": "me@example.com\r\nX-Evil: 1", "account_id": "a1"})
+        assert status == 200 and body["signed_in_as"] == "me@example.com"
+        # A Mac whose account file has no id at all trusts nobody, even an empty id.
+        account.save(account.Account("syd_t", "", "me@example.com", "Me", "d1", "Test Mac",
+                                     "syllabus", SERVICE, "x"))
+        assert seen({"email": "me@example.com", "account_id": ""})[0] == 403
+        assert seen({"email": "me@example.com"})[0] == 403
+        # The environ keys cannot be set by a plain local request.
+        with gui.app.test_client() as c:
+            res = c.get("/api/status", headers={"intake.viewer": "me@example.com",
+                                                "intake.viewer_account": "a1", "Intake-Relay": "1"})
+            assert res.get_json()["signed_in_as"] == ""
+    finally:
+        account.forget()
+results.append(run("a forged viewer is refused, and the name shown is the account's own", t27))
+
+
+def t28():
+    """The name shown follows the service (via /api/account), never the frame."""
+    account.save(ME)
+    saved = account.transport
+    account.transport = lambda m, u, h, b, t: (200, {"account": {"id": "a1", "email": "Renamed@Example.com"}})
+    try:
+        def shown(frame_email):
+            f = relay.serve(gui.app, req("/api/status", viewer={"email": frame_email, "account_id": "a1"}))
+            return json.loads(unb64(f))["signed_in_as"]
+        assert shown("attacker@evil.example") == "me@example.com"
+        frames = relay.serve(gui.app, req("/api/account"))
+        assert frames[0]["status"] == 200, frames[0]
+        assert account.load().email == "Renamed@Example.com"
+        assert shown("attacker@evil.example") == "renamed@example.com"
+    finally:
+        account.transport = saved
+        account.forget()
+results.append(run("the displayed email is refreshed by the service's answer, and a frame email is never shown", t28))
 
 
 print()

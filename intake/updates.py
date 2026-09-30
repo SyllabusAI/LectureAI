@@ -10,9 +10,11 @@ or a GitHub that is slow costs nothing.
 What a person is told depends on how Syllabus was installed. In the app,
 the newer version is a download away and the notice links to it. From a
 pipx install the update is `pipx upgrade intake`, so the notice says that.
-Nothing replaces itself: an unsigned app that swapped its own files would
-send everyone back through Gatekeeper on each version, and its microphone
-permission with them. Self-update waits for a signed build.
+Nothing here replaces itself: an unsigned app that swapped its own files
+would send everyone back through Gatekeeper on each version, and its
+microphone permission with them. A Developer ID signed build that carries
+Sparkle updates itself through intake/sparkle.py; this check keeps running
+beside it for the panel's notice and the pipx path.
 
 Other releases on the same repository, the ffmpeg builds the app bundles,
 are tagged ffmpeg-... and are skipped here.

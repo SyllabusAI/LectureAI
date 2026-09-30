@@ -70,6 +70,6 @@ jobs:
           cd "$RUNNER_TEMP/ffmpeg"
           VERSION="$(cat "$GITHUB_WORKSPACE/packaging/ffmpeg/VERSION")"
           gh release create "$TAG" "$ASSET" "$ASSET.sha256" \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
             --title "ffmpeg $VERSION for Syllabus.app" \
             --notes "$(printf 'Static ffmpeg and ffprobe for Apple silicon, built from the ffmpeg %s release by packaging/ffmpeg/build.sh with GPL and nonfree parts disabled. LGPL 2.1; license texts are in the tarball. This is a build input for Syllabus.app, not something to install by hand.\n\nsha256: %s' "$VERSION" "$(cut -d' ' -f1 "$ASSET.sha256")")"

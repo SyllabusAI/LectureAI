@@ -115,10 +115,21 @@ def save(account: Account) -> None:
 
 
 def forget() -> None:
+    """Drop this Mac's account, and everything cached on its behalf: the live
+    Drive token in memory, the last-known grant state on disk, and the lecture
+    text the study assistant fetched, all of which belong to the account being
+    left."""
+    forget_drive_token()
+    for path in (config.ACCOUNT_FILE, _drive_cache_file()):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
     try:
-        config.ACCOUNT_FILE.unlink(missing_ok=True)
-    except OSError:
-        pass
+        from intake import assistant
+        assistant.clear_cache()
+    except Exception as exc:  # noqa: BLE001 - signing out must not fail on housekeeping
+        _say(f"could not clear the assistant's cache: {exc}")
 
 
 def device_name() -> str:
@@ -256,7 +267,20 @@ def whoami() -> tuple[str, str]:
     if status != 200:
         return "unreachable", f"the account service answered {status}"
     account = data.get("account") or {}
-    return "ok", str(account.get("email") or acct.email)
+    fresh = str(account.get("email") or "").strip()
+    # The service's own answer to this Mac's own token (never anything from a
+    # relayed frame) is what keeps the stored email from going stale, since
+    # that is the email the panel shows as "Signed in as". Only when the
+    # answer is about the same account, and the file is still that account's.
+    if fresh and fresh != acct.email and str(account.get("id") or acct.account_id) == acct.account_id:
+        current = load()
+        if current is not None and current.token == acct.token:
+            current.email = fresh
+            try:
+                save(current)
+            except OSError as exc:
+                _say(f"could not update the stored account email: {exc}")
+    return "ok", fresh or acct.email
 
 
 def sign_out() -> None:
@@ -397,7 +421,9 @@ class DriveGrantMissing(Exception):
     """The account has no Drive grant, or Google stopped honoring it."""
 
 
-_drive: dict = {"token": "", "expires_at": 0.0, "email": ""}
+# account_id says whose token this is. Without it the cache would hand one
+# account's live token (and Google email) to whoever signs in next.
+_drive: dict = {"token": "", "expires_at": 0.0, "email": "", "account_id": ""}
 _drive_lock = threading.Lock()
 
 
@@ -450,11 +476,13 @@ def drive_token() -> tuple[str, float, str]:
     if acct is None:
         raise DriveGrantMissing("this Mac is not signed in to an account")
     with _drive_lock:
+        if _drive["account_id"] != acct.account_id:
+            _drive.update(token="", expires_at=0.0, email="", account_id="")
         if _drive["token"] and time.time() < _drive["expires_at"] - DRIVE_TOKEN_MARGIN:
             return _drive["token"], _drive["expires_at"], _drive["email"]
         status, data = call("POST", "/drive/token", {}, token=acct.token)
         if status in (404, 409):
-            _drive.update(token="", expires_at=0.0)
+            _drive.update(token="", expires_at=0.0, email="", account_id="")
             _note_drive(False, detail=str(data.get("reason") or data.get("error") or ""))
             raise DriveGrantMissing(
                 "the account has no Google Drive connection"
@@ -463,14 +491,14 @@ def drive_token() -> tuple[str, float, str]:
             raise RuntimeError(f"the account service answered {status} for a Drive token")
         expires_at = time.time() + float(data.get("expires_in") or 3600)
         _drive.update(token=str(data["access_token"]), expires_at=expires_at,
-                      email=str(data.get("google_email") or ""))
+                      email=str(data.get("google_email") or ""), account_id=acct.account_id)
         _note_drive(True, _drive["email"])
         return _drive["token"], expires_at, _drive["email"]
 
 
 def forget_drive_token() -> None:
     with _drive_lock:
-        _drive.update(token="", expires_at=0.0, email="")
+        _drive.update(token="", expires_at=0.0, email="", account_id="")
 
 
 def drive_status() -> dict:

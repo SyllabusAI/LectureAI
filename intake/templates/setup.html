@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<script>
+<script nonce="{{ csp_nonce }}">
   try {
     var saved = localStorage.getItem("lectureai-theme");
     if (saved === "light" || saved === "dark") {
@@ -16,7 +16,7 @@
     }
   } catch (e) { /* system theme is fine */ }
 </script>
-<style>
+<style nonce="{{ csp_nonce }}">
   :root {
     color-scheme: light dark;
     --brand: #8C52FF;
@@ -131,6 +131,10 @@
   .check-name { font-weight: 500; min-width: 140px; }
   .check-detail { color: var(--muted); font-weight: 300; word-break: break-word; }
   .check-fix { color: var(--warn); font-weight: 400; margin-top: 2px; }
+  .lid-warning { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid var(--warn);
+    border-radius: 6px; background: color-mix(in srgb, var(--warn) 10%, transparent);
+    font-size: 13px; line-height: 1.5; }
+  .lid-warning strong { color: var(--warn); }
   .cal { padding: 14px 0; border-top: 1px solid var(--line); }
   .cal:first-child { border-top: none; padding-top: 4px; }
   .cal .hint { margin-top: 4px; }
@@ -211,6 +215,12 @@
         <button type="button" class="btn small" id="refreshDevices">Refresh</button>
       </div>
       <div class="hint" id="deviceHint"></div>
+      <p class="lid-warning" id="lidWarning">
+        <strong>Don't close the lid while recording.</strong> Closing it puts your Mac
+        to sleep, and the recording stops there. Press Stop first, then close it.
+        A dimmed or sleeping screen is fine: {{ profile.title }} keeps the Mac awake
+        for as long as it records.
+      </p>
     </div>
 
     <!-- 3. Schedule -->
@@ -341,7 +351,7 @@
 
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 const $ = (id) => document.getElementById(id);
 let DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_NAMES = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday",
@@ -384,20 +394,32 @@ async function api(path, body) {
   return data;
 }
 
-function hourLabel(h) {
-  const suffix = h < 12 ? "AM" : "PM";
-  const twelve = h % 12 === 0 ? 12 : h % 12;
-  return `${twelve}:00 ${suffix}`;
+// Start times go in quarter hours, the step normalize_start accepts.
+const START_STEP = 15;
+
+function startValue(h, m) {
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-function hourOptions(selected) {
-  // The whole day, because normalize_hour accepts the whole day. When these
-  // two disagreed the select had no option carrying the saved hour, so the
+function startLabel(h, m) {
+  const suffix = h < 12 ? "AM" : "PM";
+  const twelve = h % 12 === 0 ? 12 : h % 12;
+  return `${twelve}:${String(m).padStart(2, "0")} ${suffix}`;
+}
+
+function startOptions(selected) {
+  // The whole day, because normalize_start accepts the whole day. When these
+  // two disagreed the select had no option carrying the saved time, so the
   // browser fell back to its first one and opening Setup quietly moved a 5am
-  // class to 6am, and saving then wrote that back.
+  // class to 6am, and saving then wrote that back. A schedule from before
+  // quarter hours sends a bare hour, so 9 is read as 09:00.
+  const wanted = /^\d{1,2}$/.test(String(selected)) ? startValue(Number(selected), 0) : String(selected);
   let out = "";
   for (let h = 0; h <= 23; h++) {
-    out += `<option value="${h}" ${h === selected ? "selected" : ""}>${hourLabel(h)}</option>`;
+    for (let m = 0; m < 60; m += START_STEP) {
+      const value = startValue(h, m);
+      out += `<option value="${value}" ${value === wanted ? "selected" : ""}>${startLabel(h, m)}</option>`;
+    }
   }
   return out;
 }
@@ -407,11 +429,11 @@ function dayOptions(selected) {
 }
 
 function addRow(row) {
-  row = row || { day: "Mon", start: 9, course: "" };
+  row = row || { day: "Mon", start: "09:00", course: "" };
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td><select class="day" aria-label="Day">${dayOptions(row.day)}</select></td>
-    <td><select class="start" aria-label="Start time">${hourOptions(Number(row.start))}</select></td>
+    <td><select class="start" aria-label="Start time">${startOptions(row.start)}</select></td>
     <td><input type="text" class="course" aria-label="Course code" placeholder="ACCT-4321" value="${escapeHtml(row.course)}" spellcheck="false"></td>
     <td><button type="button" class="btn small remove" aria-label="Remove this class">&times;</button></td>`;
   tr.querySelector(".remove").onclick = () => tr.remove();
@@ -422,7 +444,7 @@ function addRow(row) {
 function readRows() {
   return [...$("rows").querySelectorAll("tr")].map(tr => ({
     day: tr.querySelector(".day").value,
-    start: Number(tr.querySelector(".start").value),
+    start: tr.querySelector(".start").value,
     course: tr.querySelector(".course").value.trim(),
   }));
 }

@@ -17,7 +17,9 @@ from _test_home import fresh_home  # noqa: E402
 
 fresh_home()  # before config is imported, so nothing touches ~/.intake
 
-from intake import assistant, config  # noqa: E402
+from intake import account as _account, assistant, config  # noqa: E402
+
+account_call = _account.call
 
 LOG = (
     "2026-09-15T10:00:00\tACCT-4321\ta.m4a\tACCT-4321_2026-09-15_Process-Costing"
@@ -84,10 +86,8 @@ def setup(log=LOG):
     config.HOME_DIR = config.BASE_DIR = home
     config.LOG_FILE = home / "pipeline.log"
     config.LOG_FILE.write_text(log)
-    cache = home / ".assistant"
-    if cache.exists():
-        for f in cache.iterdir():
-            f.unlink()
+    assistant._MEMORY.clear()
+    assistant._legacy_swept = False
     log_file = home / "assistant.log"
     if log_file.exists():
         log_file.unlink()
@@ -332,6 +332,25 @@ def t16():
 results.append(run("a signed-in Mac asks through the account service, with no key", t16))
 
 
+def t16b():
+    # The service says which model answered; with no word from it (an older
+    # service), the line falls back to the Mac's own constant.
+    status, evs = answer()
+    evs[-1] = {**evs[-1], "model": "claude-sonnet-5-5"}
+    lines = []
+    for reply in ((status, evs), answer()):
+        drive = managed(Service(reply))   # a fresh home each time
+        list(assistant.ask("What is process costing?", "ACCT-4321", service=drive))
+        lines += [json.loads(l) for l in (config.BASE_DIR / "assistant.log").read_text().splitlines()]
+    assert [l["model"] for l in lines] == ["claude-sonnet-5-5", config.ASSISTANT_MODEL], lines
+    for line in lines:
+        assert isinstance(line["seconds"], float) and line["seconds"] >= 0, line
+        assert 0 <= line["first_text_seconds"] <= line["seconds"], line
+        # Still nothing about what was asked beyond its length.
+        assert "question" not in line and "answer" not in line, line
+results.append(run("the log line says which model answered and how long it took", t16b))
+
+
 def t17():
     svc = Service(answer(), (409, {"error": "session_ended", "reason": "expired"}),
                   answer(session="sess_2"))
@@ -455,6 +474,156 @@ def t21():
     events = through(managed(Service(no_plan)))
     assert events[-1]["type"] == "error" and "Pro plan" in events[-1]["text"], events
 results.append(run("a signed-in Mac with its own key keeps answering when the plan has no sessions", t21))
+
+
+# --- what stays on this Mac ----------------------------------------------------
+#
+# Fake data only, in a throwaway INTAKE_HOME. The promise under test: fetched
+# Drive text is held in memory for CACHE_TTL_SECONDS and is never written to
+# disk; the plaintext folder older versions left is deleted; signing out (or a
+# revoked token) drops everything held.
+
+SECRET_SUMMARY = "SECRET-SUMMARY-zebra-4471"
+SECRET_WORDS = "SECRET-TRANSCRIPT-walrus-9052"
+SECRET_STORE = {"1aBcProcessCosting15xyzQ": SECRET_SUMMARY,
+                "1aBcCostVolumeProfit17xyQ": "cvp " + SECRET_SUMMARY,
+                "TRANSCRIPT:ACCT-4321_2026-09-15_Process-Costing": SECRET_WORDS}
+
+
+def files_holding(marker, root):
+    """Every file under root whose bytes contain marker, and every path that names it."""
+    hits = []
+    for path in [root, *root.rglob("*")]:
+        if marker.encode() in str(path).encode():
+            hits.append(path)
+        elif path.is_file() and not path.is_symlink() and marker.encode() in path.read_bytes():
+            hits.append(path)
+    return hits
+
+
+def fake_account():
+    return _account.Account(token="tok_fake", account_id="acct_1", email="a@example.com", name="A",
+                            device_id="dev_1", device_name="Test Mac", profile="syllabus",
+                            url="https://accounts.invalid", claimed_at="2026-09-29T00:00:00")
+
+
+def escalating_session():
+    continuation = [{"type": "tool_use", "id": "toolu_1", "name": "fetch_transcripts",
+                     "input": {"lectures": ["ACCT-4321 2026-09-15: Process Costing"], "reason": "words"}}]
+    first = (200, [
+        {"type": "session", "id": "sess_1", "opened": True},
+        {"type": "escalate", "session_id": "sess_1", "reason": "words",
+         "lectures": ["ACCT-4321 2026-09-15: Process Costing"], "continuation": continuation},
+        {"type": "done", "stop_reason": "tool_use", "escalating": True, "cost_microusd": 1,
+         "input_tokens": 1, "output_tokens": 1, "cache_read_tokens": 0, "cache_write_tokens": 0},
+    ])
+    svc = Service(first, answer(opened=False, text="Answered."))
+    setup()
+    assistant._SESSIONS.clear()
+    assistant.managed = lambda: True
+    assistant.stream_transport = svc
+    return svc, FakeService(dict(SECRET_STORE))
+
+
+def t22():
+    svc, drive = escalating_session()
+    events = list(assistant.ask("the exact words?", "ACCT-4321", service=drive))
+    assert events[-1]["type"] == "done" and events[-1]["escalated"], events
+    # The round trip still carried the transcript back to the service.
+    assert svc.bodies[1]["transcripts"][0]["body"] == SECRET_WORDS, svc.bodies[1]
+    for marker in (SECRET_SUMMARY, SECRET_WORDS):
+        found = files_holding(marker, config.ROOT_DIR)
+        assert not found, f"lecture text reached disk after a completed session: {found}"
+    assert not (config.BASE_DIR / ".assistant").exists(), "the cache folder came back"
+    # What is written is counts and titles, and no question text.
+    log = (config.BASE_DIR / "assistant.log").read_text()
+    assert "the exact words?" not in log and SECRET_WORDS not in log, log
+results.append(run("a completed escalated session leaves no lecture text on disk", t22))
+
+
+def t23():
+    setup()
+    calls = []
+    drive = FakeService(dict(SECRET_STORE), calls=calls)
+    lecs = [l for l in assistant.library() if l.course == "ACCT-4321"]
+    assistant.stage_one(drive, lecs)
+    fetched = len([c for c in calls if c[0] in ("export", "get_media")])
+    assistant.stage_one(drive, lecs)
+    assert len([c for c in calls if c[0] in ("export", "get_media")]) == fetched, "no reuse inside the TTL"
+    # Past the TTL the entry is dropped and Drive is asked again.
+    for key, (stored, text) in list(assistant._MEMORY.items()):
+        assistant._MEMORY[key] = (stored - assistant.CACHE_TTL_SECONDS - 1, text)
+    assert all(assistant._cached(k) is None for k in list(assistant._MEMORY)), "an expired entry was served"
+    assistant.stage_one(drive, lecs)
+    assert len([c for c in calls if c[0] in ("export", "get_media")]) == 2 * fetched, "expiry did not refetch"
+    # And expired entries are pruned on the next write rather than kept forever.
+    for key, (stored, text) in list(assistant._MEMORY.items()):
+        assistant._MEMORY[key] = (stored - assistant.CACHE_TTL_SECONDS - 1, text)
+    assistant._cache("fresh", "x")
+    assert list(assistant._MEMORY) == ["fresh"], list(assistant._MEMORY)
+results.append(run("fetched text is reused inside the TTL, refetched after it, and pruned", t23))
+
+
+def t24():
+    setup()
+    # What 0.5.x left behind: a 0644 file of plaintext in each place it could be.
+    from intake import profiles
+    old = [config.BASE_DIR / ".assistant", config.ROOT_DIR / ".assistant"]
+    old += [config.profile_home(p) / ".assistant" for p in profiles.PROFILES.values()]
+    for folder in old:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "1aBcProcessCosting15xyzQ.txt").write_text(SECRET_SUMMARY)
+        (folder / "x.transcript.txt").write_text(SECRET_WORDS)
+    outside = config.ROOT_DIR / "keep-me.txt"
+    outside.write_text("not the assistant's")
+    # Asking with no lectures for the course still sweeps first.
+    list(assistant.ask("hello", "NOPE-0000", service=FakeService({})))
+    left = [f for f in old if f.exists()]
+    assert not left, f"old plaintext folders survived: {left}"
+    assert outside.read_text() == "not the assistant's", "the sweep deleted something that is not the cache"
+results.append(run("the plaintext folder older versions left is deleted the first time it runs", t24))
+
+
+def t25():
+    svc, drive = escalating_session()
+    list(assistant.ask("q", "ACCT-4321", service=drive))
+    assert assistant._MEMORY and assistant._SESSIONS, "nothing was held, so nothing was tested"
+    legacy = config.BASE_DIR / ".assistant"
+    legacy.mkdir(exist_ok=True)
+    (legacy / "k.txt").write_text(SECRET_SUMMARY)
+    account = _account
+    account.save(fake_account())
+    account.call = lambda *a, **k: (200, {})   # no network
+    try:
+        account.sign_out()
+    finally:
+        account.call = account_call
+    assert not assistant._MEMORY, "fetched text survived sign-out"
+    assert not assistant._SESSIONS, "session ids survived sign-out"
+    assert not legacy.exists(), "the plaintext folder survived sign-out"
+    assert account.load() is None
+results.append(run("signing out clears what the assistant holds", t25))
+
+
+def t26():
+    setup()
+    assistant._cache("k", SECRET_SUMMARY)
+    assistant._SESSIONS["ACCT-4321"] = "sess_1"
+    account = _account
+    account.save(fake_account())
+    account.forget()      # what a revoked token does
+    assert not assistant._MEMORY and not assistant._SESSIONS
+results.append(run("a revoked sign-in clears it too", t26))
+
+
+def t27():
+    setup()
+    legacy = config.BASE_DIR / ".assistant"
+    legacy.mkdir()
+    (legacy / "k.txt").write_text(SECRET_SUMMARY)
+    assistant.sweep_legacy_once()      # what the panel's load does, before any question
+    assert not legacy.exists(), "opening the panel left the old plaintext cache in place"
+results.append(run("the old cache goes when the panel loads, without a question being asked", t27))
 
 print()
 print(f"{sum(results)}/{len(results)} passed")

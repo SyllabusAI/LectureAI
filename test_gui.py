@@ -299,7 +299,7 @@ def t15():
     # The saved theme must be applied before the stylesheet is parsed,
     # otherwise the page paints the OS theme first and visibly corrects.
     script = html.find("lectureai-theme")
-    style = html.find("<style>")
+    style = html.find("<style")
     assert script != -1 and style != -1, "missing script or style"
     assert script < style, "theme script runs after the stylesheet; page will flash"
 results.append(run("the saved theme is applied before first paint", t15))
@@ -417,7 +417,7 @@ def t21():
     assert state["openai_set"] is True
     assert "sk-openai-test-key-000000" not in json.dumps(state), "key leaked to the page"
     assert state["openai"].startswith("sk-ope") and "..." in state["openai"], state["openai"]
-    assert state["schedule"][0] == {"day": "Tue", "start": 14, "course": "ACCT-4321"}
+    assert state["schedule"][0] == {"day": "Tue", "start": "14:00", "course": "ACCT-4321"}
 
     # Blank keys keep what is on file; one bad row is named.
     res = client.post("/api/setup", json={
@@ -448,6 +448,22 @@ def t21():
     env = setup_wizard.read_env(setup_home / ".env")
     assert env["OPENAI_API_KEY"] == "sk-openai-test-key-000000", "blank key wiped the saved one"
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key-0000000000"
+
+    # A class on the quarter hour saves, and comes back to the page as picked.
+    res = client.post("/api/setup", json={
+        "openai_key": "", "anthropic_key": "", "device": "",
+        "schedule": [{"day": "Mon", "start": "09:45", "course": "ENTR-4306"}],
+        "notion": {"enabled": False},
+    })
+    assert res.status_code == 200, res.get_json()
+    assert client.get("/api/setup").get_json()["schedule"] == \
+        [{"day": "Mon", "start": "09:45", "course": "ENTR-4306"}]
+    res = client.post("/api/setup", json={
+        "openai_key": "", "anthropic_key": "", "device": "",
+        "schedule": [{"day": "Mon", "start": "09:50", "course": "ENTR-4306"}],
+        "notion": {"enabled": False},
+    })
+    assert res.status_code == 400 and "quarter hour" in res.get_json()["error"], res.get_json()
 results.append(run("the page shows masked keys, keeps them on blank, and names a bad row", t21))
 
 
@@ -1725,6 +1741,71 @@ def t52():
         gui._recorder = None
         config.RECORDING_STATE_FILE.unlink(missing_ok=True)
 results.append(run("recording starts with no permission checkbox or acknowledgment anywhere", t52))
+
+
+def t53():
+    import re
+    from intake import signin
+    seen = set()
+    for path in ("/", "/setup", "/api/status", "/nope"):
+        res = client.get(path)
+        csp = res.headers.get("Content-Security-Policy", "")
+        assert csp, f"{path} carries no Content-Security-Policy"
+        for want in ("default-src 'none'", "object-src 'none'", "base-uri 'none'",
+                     "frame-ancestors 'none'", "connect-src 'self'", "form-action 'self'"):
+            assert want in csp, f"{path}: {want!r} missing from {csp}"
+        assert "unsafe-inline" not in csp.replace("style-src-attr 'unsafe-inline'", ""), csp
+        assert "unsafe-eval" not in csp and "script-src 'self'" not in csp, csp
+        nonce = re.search(r"script-src 'nonce-([^']+)'", csp).group(1)
+        assert nonce not in seen, "a nonce was reused"
+        seen.add(nonce)
+        if path in ("/", "/setup"):
+            html = res.get_data(as_text=True)
+            # Every script and style element carries this response's nonce,
+            # and nothing else in the page could run.
+            tags = re.findall(r"<(?:script|style)\b[^>]*>", html)
+            assert len(tags) >= 3, tags
+            assert all(f'nonce="{nonce}"' in t for t in tags), tags
+            assert not re.search(r"<[a-z][^>]*\son[a-z]+\s*=", html), "an inline handler"
+            assert "javascript:" not in html
+            assert "srcdoc" not in html and "<iframe" not in html
+    # The policy names only the origins the pages use.
+    origins = set(re.findall(r"https://[^\s;']+", signin.content_security_policy("x")))
+    assert origins == {"https://fonts.googleapis.com", "https://fonts.gstatic.com"}, origins
+    # A refused request still gets a policy of its own.
+    refused = client.get("/api/status", headers={"Host": "evil.example"})
+    assert refused.status_code == 403 and "Content-Security-Policy" in refused.headers
+results.append(run("every panel answer carries a Content-Security-Policy with a fresh nonce that the pages use", t53))
+
+
+def t54():
+    from intake import relay, signin
+    want = {k.lower(): v for k, v in signin.STATIC_SECURITY_HEADERS.items()}
+    assert want["x-frame-options"] == "DENY" and want["x-content-type-options"] == "nosniff"
+    assert want["referrer-policy"] == "same-origin" and want["x-permitted-cross-domain-policies"] == "none"
+    for feature in ("camera", "geolocation", "payment", "microphone"):
+        assert f"{feature}=()" in want["permissions-policy"], feature
+    # 200s, a 404, and a refusal all carry them; the local panel does not send HSTS.
+    for path, headers in (("/", {}), ("/setup", {}), ("/api/status", {}), ("/nope", {}),
+                          ("/api/status", {"Host": "evil.example"})):
+        res = client.get(path, headers=headers)
+        for name, value in want.items():
+            assert res.headers.get(name) == value, f"{path}: {name} is {res.headers.get(name)!r}"
+        assert "Content-Security-Policy" in res.headers, "the CSP was clobbered"
+        assert "Strict-Transport-Security" not in res.headers, "HSTS on plain http"
+    # Every header set here is on the relay's whitelist, or the relay strips it.
+    for name in list(want) + ["strict-transport-security", "content-security-policy"]:
+        assert name in relay.RESPONSE_HEADERS, name
+results.append(run("every panel answer carries the security headers, local ones without HSTS", t54))
+
+
+def t55():
+    from intake import signin
+    res = client.get("/x", headers={"Host": "<b>x</b>.example"})
+    assert res.status_code == 403
+    assert b"<b>" not in res.data, res.data
+    assert signin.html.escape("<") == "&lt;"
+results.append(run("a refusal page escapes the host it names", t55))
 
 
 print()

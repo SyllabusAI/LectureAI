@@ -665,9 +665,8 @@ def _schedule_rows() -> tuple[list[dict], int, str]:
         loaded = config.load_schedule()
     except config.ScheduleError as exc:
         return [], config.DEFAULT_TOLERANCE_MINUTES, str(exc)
-    rows = [{"day": m.day, "start": m.hour, "course": m.course}
-            for m in sorted(loaded.meetings,
-                            key=lambda m: (config.DAYS.index(m.day), m.hour))]
+    rows = [{"day": m.day, "start": m.start, "course": m.course}
+            for m in sorted(loaded.meetings, key=lambda m: m.sort_key)]
     return rows, loaded.tolerance_minutes, ""
 
 
@@ -840,10 +839,12 @@ def setup_save():
     meetings = []
     for n, row in enumerate(rows, start=1):
         try:
+            hour, minute = config.normalize_start(row.get("start", ""))
             meetings.append(config.Meeting(
                 config.normalize_day(row.get("day", "")),
-                config.normalize_hour(row.get("start", "")),
+                hour,
                 config.normalize_course(row.get("course", "")),
+                minute,
             ))
         except (ValueError, AttributeError) as exc:
             return jsonify({"ok": False, "error": f"class row {n}: {exc}", "row": n}), 400
@@ -1098,6 +1099,7 @@ def assistant_state():
     account needs an Anthropic key of its own. No network call here: whether
     the plan allows it is answered by the first question, not by this poll.
     """
+    assistant.sweep_legacy_once()   # an old plaintext cache goes as soon as the panel opens
     managed = assistant.managed()
     ready = managed or bool(config.ANTHROPIC_API_KEY)
     return jsonify({
