@@ -570,7 +570,9 @@ intake watch --once ~/.intake/syllabus/inbox/lecture.m4a
 ## The class schedule
 
 `~/.intake/syllabus/schedule.toml` maps each class meeting to a course code. One
-row per meeting: the day, the hour it starts on a 24-hour clock, and the code.
+row per meeting: the day, the time it starts on a 24-hour clock, and the code.
+A class on the hour is just the hour (`14`); anything else is quoted
+(`"14:15"`). Start times go in quarter hours.
 `intake setup` writes it; editing it by hand is just as good, and is the
 only thing you need to touch each semester.
 
@@ -579,6 +581,7 @@ classes = [
   { day = "Mon", start =  9, course = "ENTR-4306" },
   { day = "Tue", start = 12, course = "ENTR-3306" },
   { day = "Tue", start = 14, course = "ACCT-4321" },
+  { day = "Thu", start = "10:45", course = "RELI-3304" },
 ]
 
 tolerance_minutes = 45

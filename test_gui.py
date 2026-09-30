@@ -417,7 +417,7 @@ def t21():
     assert state["openai_set"] is True
     assert "sk-openai-test-key-000000" not in json.dumps(state), "key leaked to the page"
     assert state["openai"].startswith("sk-ope") and "..." in state["openai"], state["openai"]
-    assert state["schedule"][0] == {"day": "Tue", "start": 14, "course": "ACCT-4321"}
+    assert state["schedule"][0] == {"day": "Tue", "start": "14:00", "course": "ACCT-4321"}
 
     # Blank keys keep what is on file; one bad row is named.
     res = client.post("/api/setup", json={
@@ -448,6 +448,22 @@ def t21():
     env = setup_wizard.read_env(setup_home / ".env")
     assert env["OPENAI_API_KEY"] == "sk-openai-test-key-000000", "blank key wiped the saved one"
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key-0000000000"
+
+    # A class on the quarter hour saves, and comes back to the page as picked.
+    res = client.post("/api/setup", json={
+        "openai_key": "", "anthropic_key": "", "device": "",
+        "schedule": [{"day": "Mon", "start": "09:45", "course": "ENTR-4306"}],
+        "notion": {"enabled": False},
+    })
+    assert res.status_code == 200, res.get_json()
+    assert client.get("/api/setup").get_json()["schedule"] == \
+        [{"day": "Mon", "start": "09:45", "course": "ENTR-4306"}]
+    res = client.post("/api/setup", json={
+        "openai_key": "", "anthropic_key": "", "device": "",
+        "schedule": [{"day": "Mon", "start": "09:50", "course": "ENTR-4306"}],
+        "notion": {"enabled": False},
+    })
+    assert res.status_code == 400 and "quarter hour" in res.get_json()["error"], res.get_json()
 results.append(run("the page shows masked keys, keeps them on blank, and names a bad row", t21))
 
 

@@ -860,10 +860,11 @@ function longDate(iso) {
   const d = localDate(iso);
   return `${DAY_NAMES[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}`;
 }
-function hour12(h) {
+// "2pm" on the hour, "2:15pm" otherwise.
+function hour12(h, m) {
   const suffix = h >= 12 ? "pm" : "am";
   const n = h % 12 === 0 ? 12 : h % 12;
-  return `${n}${suffix}`;
+  return m ? `${n}:${String(m).padStart(2, "0")}${suffix}` : `${n}${suffix}`;
 }
 function plural(n, one, many) {
   return `${n} ${n === 1 ? one : (many || one + "s")}`;
@@ -1070,10 +1071,10 @@ function nextClassText(s) {
   for (const day of s.insights.week.days) {
     for (const c of day.classes) {
       const start = localDate(day.date);
-      start.setHours(c.hour);
+      start.setHours(c.hour, c.minute || 0);
       if (start > now) {
         const when = day.today ? "today" : DAY_NAMES[start.getDay()];
-        return `Next: ${c.course}, ${when} at ${hour12(c.hour)}`;
+        return `Next: ${c.course}, ${when} at ${hour12(c.hour, c.minute)}`;
       }
     }
   }
@@ -1143,15 +1144,15 @@ function renderWeek(ins) {
       const under = c.canceled ? "did not meet"
         : c.recorded ? TICK + "recorded"
         : c.now ? "in session"
-        : c.missed ? "no recording" : hour12(c.hour);
+        : c.missed ? "no recording" : hour12(c.hour, c.minute);
       const inner = `<span class="line"><span class="sw"></span><span class="code">${escapeHtml(c.course)}</span></span>`
         + `<span class="time">${under}</span>`;
       const why = c.canceled && c.note ? `: ${escapeHtml(c.note)}` : "";
       const title = c.canceled ? `${escapeHtml(c.course)} on ${escapeHtml(d.date)} did not meet${why}. It is not counted against the streak.`
         : c.recorded ? `Open ${escapeHtml(c.name)} in Drive`
         : c.now ? `${escapeHtml(c.course)} is in session`
-        : c.missed ? `${escapeHtml(c.course)} at ${hour12(c.hour)}: no recording was filed`
-        : `${escapeHtml(c.course)} at ${hour12(c.hour)}`;
+        : c.missed ? `${escapeHtml(c.course)} at ${hour12(c.hour, c.minute)}: no recording was filed`
+        : `${escapeHtml(c.course)} at ${hour12(c.hour, c.minute)}`;
       // A recorded class needs no excuse, so only the others carry the
       // button: one to say the class was called off, one to take it back.
       const act = c.recorded ? "" : slotAction(c, d.date);
