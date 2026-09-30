@@ -581,7 +581,9 @@ intake watch --once ~/.intake/syllabus/inbox/lecture.m4a
 ## The class schedule
 
 `~/.intake/syllabus/schedule.toml` maps each class meeting to a course code. One
-row per meeting: the day, the hour it starts on a 24-hour clock, and the code.
+row per meeting: the day, the time it starts on a 24-hour clock, and the code.
+A class on the hour is just the hour (`14`); anything else is quoted
+(`"14:15"`). Start times go in quarter hours.
 `intake setup` writes it; editing it by hand is just as good, and is the
 only thing you need to touch each semester.
 
@@ -590,6 +592,7 @@ classes = [
   { day = "Mon", start =  9, course = "ENTR-4306" },
   { day = "Tue", start = 12, course = "ENTR-3306" },
   { day = "Tue", start = 14, course = "ACCT-4321" },
+  { day = "Thu", start = "10:45", course = "RELI-3304" },
 ]
 
 tolerance_minutes = 45
@@ -1111,8 +1114,10 @@ piece of that, and the rest is planned in this order:
   from inside the bundle since the same day, and the bundle carries its own
   static LGPL ffmpeg, stays resident behind a menu bar item, has a
   start-at-login switch, ships as a DMG from a tagged release, and tells a
-  person when a newer version is out. Still to do: Developer ID signing and
-  notarization, then self-update.
+  person when a newer version is out. Developer ID signing, notarization,
+  and Sparkle self-update are built into `release.yml` and switched off
+  until the repository has the Apple and Sparkle secrets; turning them on is
+  in `docs/signing.md`.
 - **Sign-ins.** Done. The account service ("A Syllabus account" above), a
   Cloudflare Worker with D1, the same stack `mcm-dashboard` is scaffolded
   on, owns the Google sign-in, lets a panel claim an identity with a device

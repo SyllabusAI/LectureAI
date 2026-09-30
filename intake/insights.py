@@ -136,10 +136,10 @@ def _monday(day: date) -> date:
 
 def _slots(meetings, monday: date) -> list[_Slot]:
     """That week's meetings in calendar order."""
-    ordered = sorted(meetings, key=lambda m: (config.DAYS.index(m.day), m.hour))
+    ordered = sorted(meetings, key=lambda m: m.sort_key)
     return [_Slot(m.course, monday + timedelta(days=config.DAYS.index(m.day)),
                   datetime.combine(monday + timedelta(days=config.DAYS.index(m.day)),
-                                   time(hour=m.hour)))
+                                   time(hour=m.hour, minute=m.minute)))
             for m in ordered]
 
 
@@ -270,6 +270,7 @@ def compute(rows: list[dict], schedule: config.Schedule | None,
             live_from = slot.start - timedelta(minutes=tolerance)
             classes.append({
                 "course": slot.course, "hour": slot.start.hour,
+                "minute": slot.start.minute,
                 "recorded": hit is not None,
                 "url": hit["url"] if hit else "",
                 "name": hit["name"] if hit else "",

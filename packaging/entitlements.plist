@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened runtime entitlements for Syllabus.app, applied by packaging/sign.sh
+  to the app's own executables (Contents/MacOS/Syllabus, which is also the
+  recorder and the watcher, and the bundled ffmpeg that opens the microphone).
+  Libraries are signed without them. The app is not sandboxed, so network
+  access needs no entitlement.
+
+  - allow-unsigned-executable-memory: CPython's ctypes and PyObjC build call
+    stubs (libffi closures) at run time. Every notarized Python app template
+    (Briefcase's included) carries this; without it a callback can crash on
+    a signed build only, which no ad hoc test would catch.
+  - device.audio-input: recording. Without it the hardened runtime denies
+    the microphone before the permission prompt is ever shown.
+  - personal-information.calendars: Apple Calendar and Apple Reminders
+    through EventKit (intake/calendars.py).
+  - automation.apple-events: the AppleScript fallback for Apple Calendar when
+    a build lacks EventKit.
+
+  Not here, on purpose: allow-jit (CPython 3.12 has no JIT; WebKit's JIT runs
+  in its own process), disable-library-validation (every library in the
+  bundle is re-signed with the same Team ID), and anything sandbox-related.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

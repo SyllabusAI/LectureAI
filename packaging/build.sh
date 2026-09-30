@@ -67,14 +67,51 @@ for f in ffmpeg ffprobe LICENSE.md COPYING.LGPLv2.1 BUILD.txt; do
 done
 export SYLLABUS_FFMPEG_DIR="$FFMPEG_DIR"
 
+# Sparkle self-update, only when SYLLABUS_SPARKLE_PUBLIC_KEY is set (the
+# release workflow sets it once the EdDSA key and Developer ID signing are in
+# place; see docs/signing.md). Unset, nothing below runs and the bundle is
+# what it always was. The framework is the release pinned in
+# packaging/sparkle/release, checked against its sha256; syllabus.spec reads
+# the same variable for the Info.plist keys, and intake/sparkle.py starts it.
+SPARKLE_DIR=""
+if [[ -n "${SYLLABUS_SPARKLE_PUBLIC_KEY:-}" ]]; then
+    eval "$(sed 's/^/SPK_/' packaging/sparkle/release)"
+    SPARKLE_DIR="$BUILD/sparkle-$SPK_version"
+    if [[ ! -d "$SPARKLE_DIR/Sparkle.framework" ]]; then
+        URL="https://github.com/sparkle-project/Sparkle/releases/download/$SPK_version/$SPK_asset"
+        echo "fetching $URL"
+        rm -rf "$SPARKLE_DIR"
+        mkdir -p "$SPARKLE_DIR"
+        curl -sfL -o "$BUILD/$SPK_asset" "$URL"
+        echo "$SPK_sha256  $BUILD/$SPK_asset" | shasum -a 256 -c -
+        tar -xf "$BUILD/$SPK_asset" -C "$SPARKLE_DIR"
+    fi
+    export SYLLABUS_SPARKLE_BIN="$SPARKLE_DIR/bin"
+fi
+
 "$PY" -m PyInstaller --noconfirm --clean \
     --distpath "$DIST" --workpath "$BUILD/pyinstaller" \
     packaging/syllabus.spec
 
 APP="$DIST/Syllabus.app"
+if [[ -n "$SPARKLE_DIR" ]]; then
+    ditto "$SPARKLE_DIR/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+    # The framework arrived after PyInstaller sealed the bundle, so seal it
+    # again: with the Developer ID identity if one was given, else ad hoc
+    # (the release workflow signs afterward with packaging/sign.sh).
+    if [[ -n "${SYLLABUS_CODESIGN_IDENTITY:-}" ]]; then
+        packaging/sign.sh "$APP" "$SYLLABUS_CODESIGN_IDENTITY" \
+            "${SYLLABUS_ENTITLEMENTS:-packaging/entitlements.plist}"
+    else
+        codesign --force --sign - "$APP"
+    fi
+fi
 codesign --verify --deep --strict "$APP"
 echo
 echo "built $APP ($(du -sh "$APP" | cut -f1))"
 echo "  version $("$PY" -c 'import intake; print(intake.__version__)'), $(codesign -dv "$APP" 2>&1 | grep -o 'Signature=.*' || echo 'signed ad hoc')"
 echo "  ffmpeg: $("$APP/Contents/Frameworks/ffmpeg/ffmpeg" -version | head -1 | cut -d' ' -f1-3)"
+if [[ -n "$SPARKLE_DIR" ]]; then
+    echo "  sparkle: $SPK_version, feed $(plutil -extract SUFeedURL raw -o - "$APP/Contents/Info.plist")"
+fi
 echo "  open it:  open '$APP'"
