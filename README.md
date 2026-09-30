@@ -1100,8 +1100,10 @@ piece of that, and the rest is planned in this order:
   from inside the bundle since the same day, and the bundle carries its own
   static LGPL ffmpeg, stays resident behind a menu bar item, has a
   start-at-login switch, ships as a DMG from a tagged release, and tells a
-  person when a newer version is out. Still to do: Developer ID signing and
-  notarization, then self-update.
+  person when a newer version is out. Developer ID signing, notarization,
+  and Sparkle self-update are built into `release.yml` and switched off
+  until the repository has the Apple and Sparkle secrets; turning them on is
+  in `docs/signing.md`.
 - **Sign-ins.** Done. The account service ("A Syllabus account" above), a
   Cloudflare Worker with D1, the same stack `mcm-dashboard` is scaffolded
   on, owns the Google sign-in, lets a panel claim an identity with a device

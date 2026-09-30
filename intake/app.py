@@ -168,10 +168,13 @@ def recording_line(status: dict | None) -> str:
     return f"Recording {course} · {clock}".replace("  ", " ")
 
 
-def menu_items(status: dict | None, attached: bool, login_installed: bool) -> list[dict]:
+def menu_items(status: dict | None, attached: bool, login_installed: bool,
+               self_update: bool = False) -> list[dict]:
     """What the menu bar menu shows. Each item: title, action, enabled, checked.
 
     An action of None is a line of information; "-" is a separator.
+    `self_update` is whether Sparkle is running (intake/sparkle.py): then the
+    menu offers its Check for Updates in place of the download link.
     """
     rec = (status or {}).get("recording") or {}
     active = bool(rec.get("active"))
@@ -193,7 +196,10 @@ def menu_items(status: dict | None, attached: bool, login_installed: bool) -> li
                       "checked": False})
     items.append({"title": "-", "action": "-", "enabled": False, "checked": False})
     update = (status or {}).get("update") or {}
-    if update.get("available") and update.get("how") == "download":
+    if self_update:
+        items.append({"title": "Check for Updates…", "action": "sparkle_check",
+                      "enabled": True, "checked": False})
+    elif update.get("available") and update.get("how") == "download":
         items.append({"title": f"Download {title()} {update.get('version')}…",
                       "action": "update", "enabled": True, "checked": False})
     if attached:
@@ -333,6 +339,9 @@ class Resident:
         menu.setDelegate_(self._controller)
         item.setMenu_(menu)
         self._status_item = item
+        # Self-update, only in a build that carries Sparkle; a no-op otherwise.
+        from intake import sparkle
+        sparkle.start()
 
     def rebuild_menu(self, menu) -> None:
         """Fill `menu` from the panel's status. Main thread, as the menu opens."""
@@ -340,7 +349,8 @@ class Resident:
         menu.removeAllItems()
         status = probe(self.port, timeout=1.0)
         installed = service.runs_this_program()
-        for spec in menu_items(status, self.attached, installed):
+        from intake import sparkle
+        for spec in menu_items(status, self.attached, installed, sparkle.active()):
             if spec["action"] == "-":
                 menu.addItem_(NSMenuItem.separatorItem())
                 continue
@@ -380,6 +390,9 @@ class Resident:
             url = ((status.get("update") or {}).get("url")) or ""
             if url:
                 webbrowser.open(url)
+        elif action == "sparkle_check":
+            from intake import sparkle
+            sparkle.check_now()
         elif action == "quit":
             self.quit()
 
