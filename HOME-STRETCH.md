@@ -363,29 +363,33 @@ Liam can do it, and each one has a clock that is not ours.
 | Sep 30 | A card on Groq, to reach the Developer plan | Trace | Open. Free plan caps everyone at 8 audio hours a day |
 | Sep 30 | Anthropic credit and auto-reload | Trace | Unconfirmed |
 | Oct 1 | Insurance broker call | Trace | Open |
-| Oct 1 | Privacy and terms to the lawyer | Liam | Drafted: syllabus-accounts #45 |
-| Oct 2 | `syllabus@maincoursemedia.com` group and a maincoursemedia.com address for Liam | Trace | Asked 2026-09-29. Google Workspace admin task |
+| Oct 1 | Privacy and terms to the lawyer | Liam | Live since 2026-09-29 (syllabus-accounts #45, merged before review). The lawyer is not booked yet |
+| Oct 2 | `syllabus@maincoursemedia.com` group and a maincoursemedia.com address for Liam | Trace | Asked 2026-09-29. Google Workspace admin task. Urgent: the live privacy and terms pages already name this address for requests, appeals, and legal notices |
 | Oct 3 | Cloud project support email and developer contact to `syllabus@` | Liam | Waits on the group |
-| Oct 6 | Lawyer's changes in, #45 merged and live | Liam | Waits on the lawyer |
-| Oct 6 | Signing, notarization, and Sparkle in `release.yml` | Claude | Waits on Apple |
-| Oct 7 | Swap in the live Stripe price ids and secrets, deploy | Claude | Waits on Stripe |
+| Oct 6 | Lawyer's changes in and deployed as a follow-up PR | Liam | Waits on the lawyer |
+| Oct 6 | Add the six signing and Sparkle secrets, run `release.yml` by hand, check the DMG on a second Mac | Trace, Liam | Built and merged 2026-09-30 (LectureAI #105), off until the secrets exist. See `docs/signing.md`. The signed path has never run, so leave room for a fix |
+| Oct 7 | Run `scripts/stripe-live.mjs` with the live price ids, set the secrets, merge the result to deploy | Claude | Kit merged 2026-09-30 (syllabus-accounts #58), see `docs/stripe-live.md`. Waits on Stripe |
 | Oct 8 | One full live-mode run: sign up, trial, pay, record, top up, refund, delete | Liam | Waits on the two above |
 | Oct 9 | Go or slip, decided on this table | Trace, Liam | |
-| Oct 12 | Un-hide the `/syllabus/` pages, deploy Pages by hand, announce | Claude, Liam | |
+| Oct 12 | Merge main-course-media #189, deploy Pages by hand, announce | Claude, Liam | Draft PR ready 2026-09-30. Merging does not deploy |
 
 **P0. Apple and the app** (6 h, plus Apple's own clock)
 - Complete organization enrollment.
-- Developer ID signing and notarization in `packaging/build.sh` and the
-  release workflow.
+- ~~Developer ID signing and notarization in `packaging/build.sh` and the
+  release workflow.~~ Built 2026-09-30 (LectureAI #105), gated on secrets.
+  Releases stay unsigned until they are added.
 - ~~Tag v0.2.0 and run the release workflow end to end.~~ Done: v0.2.0
   through v0.5.1 were built by `release.yml`.
-- Wire Sparkle self-update.
+- ~~Wire Sparkle self-update.~~ Built 2026-09-30 (LectureAI #105), loaded
+  through PyObjC. Installed copies before the first signed release have no
+  Sparkle and reach it through the existing download notice.
+- Test installing an update while a recording is running.
 
 **P1. Legal and consent** (8 h)
 - Syllabus privacy policy and terms, hosted on the account service, naming
-  Main Course Media LLC and Texas governing law. **Drafted 2026-09-29**
-  (syllabus-accounts #45), with the no-training statement and 18+, awaiting
-  the lawyer. The old privacy page's "never come to this service" has been
+  Main Course Media LLC and Texas governing law. **Live 2026-09-29**
+  (syllabus-accounts #45), with the no-training statement and 18+. It
+  merged before the lawyer saw it, so review is still owed. The old privacy page's "never come to this service" has been
   false since P5 and is gone in the draft.
 - ~~Point the Google Cloud project's privacy policy URL at the new page.~~
   Already done: checked 2026-09-29, the Branding page links
@@ -411,9 +415,16 @@ Liam can do it, and each one has a clock that is not ours.
 **P3. Launch readiness** (6 h)
 - Opt-in crash reporting and log upload. Optional for October 12.
 - Self-hosted activation analytics on D1. No third-party pixel. Optional.
-- A content security policy on the account service's pages.
-- Close the gap where a cancellation Stripe never delivers leaves the plan's
-  allowance in place.
+- ~~A content security policy on the account service's pages.~~ Live
+  2026-09-29 (syllabus-accounts security batch).
+- ~~Close the gap where a cancellation Stripe never delivers leaves the plan's
+  allowance in place.~~ Live 2026-09-29: a 3-day hard cutoff on lost renewals.
+- Top-ups are off in production: `STRIPE_PRICE_TOPUP` is empty, so the
+  account page hides the button. The live swap sets it.
+- Test the restricted account-deletion key in the sandbox. It probably also
+  needs Invoices: Read, which `src/env.ts` does not list.
+- Keep live payment methods to cards and wallets. A delayed payment method
+  would lose a top-up, since `async_payment_succeeded` is not handled.
 
 ### Already built for the paid product
 
@@ -472,6 +483,9 @@ the starter buttons. What is NOT done, and is still P7's remaining work:
 **P8. Launch** (2 h)
 - Un-hide the `/syllabus/` pages (drop `noindex` and the sitemap and header
   blocks, add nav links, PreOrder to InStock), deploy Pages by hand, announce.
+  **Ready as a draft**, main-course-media #189. Before merging, decide the
+  button targets and wording, and cut the Gatekeeper walkthrough if the
+  launch build is signed.
 
 ---
 
@@ -482,17 +496,14 @@ the proposed bar; it is a checklist you sign off, not a feeling.
 
 1. `/security-review` clean on every PR into main from here forward.
    CI now exists in both repos (syllabus-accounts #15, LectureAI #55): tests,
-   typecheck, the copy standards, and a cross-repo prompt-parity check. Note
-   that NEITHER repo has branch protection, so every check reports and none of
-   them blocks a merge. Turning on required checks is a settings change and is
-   what would make any of this binding.
+   typecheck, the copy standards, and a cross-repo prompt-parity check.
+   Branch protection with required checks is on in both repos (checked
+   2026-09-30), so a red check blocks a merge.
 2. A written threat model covering: device token theft, relay hijack, the
    proxy as a key-exfiltration target, D1 row access across accounts, and the
    OAuth callback surface.
 3. **Rate limiting on every unauthenticated and semi-authenticated endpoint.**
-   There is none today on `/login`, `/device/start`, `/device/poll`,
-   `/panel/exchange`, or `/relay/connect`. Cloudflare rate-limiting rules at
-   minimum. This is the cheapest fix on the list and the most overdue.
+   Live 2026-09-29 on every route (syllabus-accounts security batch).
 4. A manual pass against OWASP ASVS Level 1, plus the Syllabus-specific
    surface: device tokens, the relay Durable Object, and the Drive grant.
 5. Confirm `SameSite=Lax` is genuinely sufficient on the state-changing POSTs
