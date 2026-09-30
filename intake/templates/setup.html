@@ -384,20 +384,32 @@ async function api(path, body) {
   return data;
 }
 
-function hourLabel(h) {
-  const suffix = h < 12 ? "AM" : "PM";
-  const twelve = h % 12 === 0 ? 12 : h % 12;
-  return `${twelve}:00 ${suffix}`;
+// Start times go in quarter hours, the step normalize_start accepts.
+const START_STEP = 15;
+
+function startValue(h, m) {
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-function hourOptions(selected) {
-  // The whole day, because normalize_hour accepts the whole day. When these
-  // two disagreed the select had no option carrying the saved hour, so the
+function startLabel(h, m) {
+  const suffix = h < 12 ? "AM" : "PM";
+  const twelve = h % 12 === 0 ? 12 : h % 12;
+  return `${twelve}:${String(m).padStart(2, "0")} ${suffix}`;
+}
+
+function startOptions(selected) {
+  // The whole day, because normalize_start accepts the whole day. When these
+  // two disagreed the select had no option carrying the saved time, so the
   // browser fell back to its first one and opening Setup quietly moved a 5am
-  // class to 6am, and saving then wrote that back.
+  // class to 6am, and saving then wrote that back. A schedule from before
+  // quarter hours sends a bare hour, so 9 is read as 09:00.
+  const wanted = /^\d{1,2}$/.test(String(selected)) ? startValue(Number(selected), 0) : String(selected);
   let out = "";
   for (let h = 0; h <= 23; h++) {
-    out += `<option value="${h}" ${h === selected ? "selected" : ""}>${hourLabel(h)}</option>`;
+    for (let m = 0; m < 60; m += START_STEP) {
+      const value = startValue(h, m);
+      out += `<option value="${value}" ${value === wanted ? "selected" : ""}>${startLabel(h, m)}</option>`;
+    }
   }
   return out;
 }
@@ -407,11 +419,11 @@ function dayOptions(selected) {
 }
 
 function addRow(row) {
-  row = row || { day: "Mon", start: 9, course: "" };
+  row = row || { day: "Mon", start: "09:00", course: "" };
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td><select class="day" aria-label="Day">${dayOptions(row.day)}</select></td>
-    <td><select class="start" aria-label="Start time">${hourOptions(Number(row.start))}</select></td>
+    <td><select class="start" aria-label="Start time">${startOptions(row.start)}</select></td>
     <td><input type="text" class="course" aria-label="Course code" placeholder="ACCT-4321" value="${escapeHtml(row.course)}" spellcheck="false"></td>
     <td><button type="button" class="btn small remove" aria-label="Remove this class">&times;</button></td>`;
   tr.querySelector(".remove").onclick = () => tr.remove();
@@ -422,7 +434,7 @@ function addRow(row) {
 function readRows() {
   return [...$("rows").querySelectorAll("tr")].map(tr => ({
     day: tr.querySelector(".day").value,
-    start: Number(tr.querySelector(".start").value),
+    start: tr.querySelector(".start").value,
     course: tr.querySelector(".course").value.trim(),
   }));
 }

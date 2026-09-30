@@ -63,10 +63,12 @@ await run("a <select> whose value no option carries reads back empty", async () 
 
 // --- F9: an hour the backend accepts must survive a round trip -------------
 
-await run("an early or late class keeps its hour through setup", async () => {
-  for (const hour of [0, 5, 23]) {
+await run("an early or late class keeps its time through setup", async () => {
+  // A bare hour is what a schedule from before quarter hours sends.
+  for (const [sent, want] of [["00:00", "00:00"], ["05:00", "05:00"], ["23:45", "23:45"],
+                              ["14:15", "14:15"], [9, "09:00"]]) {
     const settings = like("/api/setup", {
-      schedule: [{ day: "Mon", start: hour, course: "ENTR-4306" }],
+      schedule: [{ day: "Mon", start: sent, course: "ENTR-4306" }],
     });
     const page = loadPage(DIR, "setup.html", {
       routes: setupRoutes({ "/api/setup": settings }),
@@ -75,10 +77,9 @@ await run("an early or late class keeps its hour through setup", async () => {
     await page.settle();
     const start = page.document.querySelector("#rows select.start");
     assert(start, "the schedule table rendered no row");
-    equal(Number(start.value), hour,
-      `a class at ${hour}:00 was moved by opening settings`);
+    equal(start.value, want, `a class at ${sent} was moved by opening settings`);
     // And it survives being read back out the way Save reads it.
-    equal(page.window.readRows()[0].start, hour, `reading row back changed ${hour}:00`);
+    equal(page.window.readRows()[0].start, want, `reading row back changed ${sent}`);
     await page.close();
   }
 });

@@ -649,7 +649,7 @@ STABILITY_TIMEOUT_SECONDS = 3600  # give up waiting on a file still growing
 # The schedule is a file in the home directory (schedule.toml for syllabus;
 # the profile names it), written by `intake setup` and editable by hand: one
 # row per class meeting with the
-# day, the start hour, and the course code. It is read on first use and
+# day, the start time, and the course code. It is read on first use and
 # cached, so a missing or broken file is reported by whichever command needs
 # it rather than by every import.
 
@@ -693,11 +693,27 @@ class ScheduleError(RuntimeError):
     """The schedule file is missing or cannot be read."""
 
 
+# Class start times are picked in quarter hours. Anything finer would be a
+# typo more often than a real timetable, and the matching tolerance is far
+# wider than 15 minutes anyway.
+START_STEP_MINUTES = 15
+
+
 @dataclass(frozen=True)
 class Meeting:
     day: str      # "Mon" .. "Sun"
     hour: int     # start hour, 24h local time
     course: str
+    minute: int = 0   # 0, 15, 30 or 45
+
+    @property
+    def start(self) -> str:
+        """"14:15", the form the Setup page and the schedule file use."""
+        return format_start(self.hour, self.minute)
+
+    @property
+    def sort_key(self) -> tuple[int, int, int]:
+        return (DAYS.index(self.day), self.hour, self.minute)
 
 
 @dataclass(frozen=True)
@@ -707,7 +723,11 @@ class Schedule:
 
     @property
     def by_slot(self) -> dict[tuple[str, int], str]:
-        """(day, start hour) -> course code, the shape the matching uses."""
+        """(day, start hour) -> course code, the old shape of SCHEDULE.
+
+        Kept for anything still reading config.SCHEDULE. It cannot tell two
+        classes in the same hour apart, so the matching reads `meetings`.
+        """
         return {(m.day, m.hour): m.course for m in self.meetings}
 
     def courses(self) -> list[str]:
@@ -722,31 +742,44 @@ def normalize_day(raw: object) -> str:
     return _DAY_ALIASES[key]
 
 
-def normalize_hour(raw: object) -> int:
-    """A start hour as an int 0..23. Accepts 14, "14", "14:00", "2pm"."""
+def normalize_start(raw: object) -> tuple[int, int]:
+    """A class start as (hour, minute) on a quarter hour.
+
+    Accepts 14, "14", "14:15", "2:15pm", "2 pm". A bare number is an hour.
+    """
     if isinstance(raw, bool):
-        raise ValueError(f"start hour must be a number 0-23, not {raw!r}")
+        raise ValueError(f"start time must be a time like 14:15, not {raw!r}")
     if isinstance(raw, int):
-        hour = raw
+        hour, minute = raw, 0
     else:
         text = str(raw).strip().lower().replace(" ", "")
         match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?(am|pm)?", text)
         if not match:
-            raise ValueError(f"start hour must be a number 0-23, not {raw!r}")
+            raise ValueError(f"start time must be a time like 14:15, not {raw!r}")
         hour = int(match.group(1))
-        if match.group(2) and match.group(2) != "00":
-            raise ValueError(
-                f"start hour must be a whole hour ({raw!r} has minutes); the "
-                f"tolerance window covers classes that start on the half hour"
-            )
+        minute = int(match.group(2) or 0)
         suffix = match.group(3)
+        if suffix and not 1 <= hour <= 12:
+            raise ValueError(f"start time {raw!r} is not a 12-hour clock time")
         if suffix == "pm" and hour < 12:
             hour += 12
         elif suffix == "am" and hour == 12:
             hour = 0
     if not 0 <= hour <= 23:
         raise ValueError(f"start hour must be 0-23, not {raw!r}")
-    return hour
+    if not 0 <= minute <= 59:
+        raise ValueError(f"start minutes must be 00-59, not {raw!r}")
+    if minute % START_STEP_MINUTES:
+        raise ValueError(
+            f"start time must be on the quarter hour (:00, :15, :30 or :45), "
+            f"not {raw!r}"
+        )
+    return hour, minute
+
+
+def format_start(hour: int, minute: int = 0) -> str:
+    """(14, 5) -> "14:05"."""
+    return f"{hour:02d}:{minute:02d}"
 
 
 def normalize_course(raw: object) -> str:
@@ -860,10 +893,12 @@ def parse_schedule(text: str, source: str = "schedule.toml") -> Schedule:
             # every recording made at that hour.
             if not str(row["course"] if row["course"] is not None else "").strip():
                 raise ValueError("course code is empty")
+            hour, minute = normalize_start(row["start"])
             meetings.append(Meeting(
                 normalize_day(row["day"]),
-                normalize_hour(row["start"]),
+                hour,
                 safe_course(row["course"]),
+                minute,
             ))
         except ValueError as exc:
             raise ScheduleError(f"{source}: class row {n}: {exc}") from None
@@ -885,7 +920,8 @@ SCHEDULE_TEMPLATE = """\
 # {title} class schedule. One row per class meeting.
 #
 # day     Mon Tue Wed Thu Fri Sat Sun
-# start   the hour the class begins, 24-hour clock (14 means 2pm)
+# start   when the class begins, 24-hour clock: 14 is 2pm, "14:15" is
+#         2:15pm. Quarter hours only (:00, :15, :30, :45).
 # course  the code used for the Drive folder and filenames
 #
 # Edit this file by hand or rerun `intake setup`. Only courses listed here
@@ -932,24 +968,31 @@ def _toml_string(value: str) -> str:
 def render_schedule(meetings, tolerance_minutes: int = DEFAULT_TOLERANCE_MINUTES) -> str:
     """The text of a schedule file for these meetings.
 
-    `meetings` is any iterable of Meeting or (day, hour, course) rows. Rows are
-    written in weekday order so the file reads like a timetable.
+    `meetings` is any iterable of Meeting or (day, start, course) rows, where
+    start is anything normalize_start takes. Rows are written in weekday
+    order so the file reads like a timetable.
     """
     normalized = []
     for row in meetings:
         # A Meeting used to be trusted and copied through unchecked, which let
         # a hand-built one carry text no typed course could ever get past.
-        day, hour, course = (
-            (row.day, row.hour, row.course) if isinstance(row, Meeting) else row)
-        normalized.append(Meeting(normalize_day(day), normalize_hour(hour),
-                                  normalize_course(course)))
-    normalized.sort(key=lambda m: (DAYS.index(m.day), m.hour))
+        day, start, course = (
+            (row.day, row.start, row.course) if isinstance(row, Meeting) else row)
+        hour, minute = normalize_start(start)
+        normalized.append(Meeting(normalize_day(day), hour,
+                                  normalize_course(course), minute))
+    normalized.sort(key=lambda m: m.sort_key)
     quoted = [_toml_string(m.course) for m in normalized]
     width = max((len(q) for q in quoted), default=0)
+    # A class on the hour is still written as a bare number, the only form a
+    # build before quarter hours can read, so a timetable that never uses them
+    # stays readable by an older copy of the app on a second Mac.
+    starts = [f"{m.hour:>7}" if not m.minute else f'"{m.start}"'
+              for m in normalized]
     lines = [
-        f'  {{ day = "{m.day}", start = {m.hour:>2}, '
+        f'  {{ day = "{m.day}", start = {t}, '
         f'course = {q}{" " * (width - len(q))} }},'
-        for m, q in zip(normalized, quoted)
+        for m, t, q in zip(normalized, starts, quoted)
     ]
     # The title only reaches a comment line, but a newline in it would comment
     # out the row below just the same.
@@ -1061,10 +1104,12 @@ def infer_course(
     best_course = UNKNOWN_COURSE
     best_delta = None
 
-    for (sched_day, sched_hour), course in current.by_slot.items():
-        if sched_day != day:
+    for meeting in current.meetings:
+        if meeting.day != day:
             continue
-        start = when.replace(hour=sched_hour, minute=0, second=0, microsecond=0)
+        course = meeting.course
+        start = when.replace(hour=meeting.hour, minute=meeting.minute,
+                             second=0, microsecond=0)
         delta_minutes = abs((when - start).total_seconds()) / 60
         if delta_minutes > current.tolerance_minutes:
             continue

@@ -156,16 +156,17 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def parse_meeting_line(line: str) -> config.Meeting:
-    """"Tue 14 ACCT-4321" -> Meeting. Commas are fine too."""
+    """"Tue 14:15 ACCT-4321" -> Meeting. Commas are fine too."""
     parts = [p for p in line.replace(",", " ").split() if p]
     if len(parts) != 3:
         raise ValueError(
-            "enter three things: day, start hour, course code, "
-            "like  Tue 14 ACCT-4321"
+            "enter three things: day, start time, course code, "
+            "like  Tue 14:15 ACCT-4321"
         )
-    day, hour, course = parts
-    return config.Meeting(config.normalize_day(day), config.normalize_hour(hour),
-                          config.normalize_course(course))
+    day, start, course = parts
+    hour, minute = config.normalize_start(start)
+    return config.Meeting(config.normalize_day(day), hour,
+                          config.normalize_course(course), minute)
 
 
 def _yes(answer: str, default: bool) -> bool:
@@ -311,9 +312,8 @@ class Wizard:
 
         if existing and existing.meetings:
             self.say("Class schedule on file:")
-            for m in sorted(existing.meetings,
-                            key=lambda m: (config.DAYS.index(m.day), m.hour)):
-                self.say(f"  {m.day} {m.hour:>2}:00  {m.course}")
+            for m in sorted(existing.meetings, key=lambda m: m.sort_key):
+                self.say(f"  {m.day} {m.hour:>2}:{m.minute:02d}  {m.course}")
             try:
                 keep = self.ask("Keep this schedule? [Y/n] ")
             except EOFError:
@@ -322,9 +322,9 @@ class Wizard:
                 return list(existing.meetings), existing.tolerance_minutes
 
         tolerance = existing.tolerance_minutes if existing else config.DEFAULT_TOLERANCE_MINUTES
-        self.say("Class schedule. One meeting per line as: day, start hour "
-                 "(24-hour clock), course code.")
-        self.say("  For example:  Tue 14 ACCT-4321     Enter a blank line when done.")
+        self.say("Class schedule. One meeting per line as: day, start time "
+                 "(24-hour clock, quarter hours), course code.")
+        self.say("  For example:  Tue 14:15 ACCT-4321     Enter a blank line when done.")
         meetings: list[config.Meeting] = []
         while True:
             try:

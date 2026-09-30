@@ -150,7 +150,9 @@ def t9():
         'classes = [ { day = "Mon", course = "X-1000" } ]': "missing start",
         'classes = [ { day = "Mon", start = 9, course = "" } ]': "empty",
         'classes = [ "Mon 9 X-1000" ]': "row 1",
-        'classes = [ { day = "Mon", start = "9:30", course = "X" } ]': "whole hour",
+        'classes = [ { day = "Mon", start = "9:20", course = "X" } ]': "quarter hour",
+        'classes = [ { day = "Mon", start = "9:75", course = "X" } ]': "00-59",
+        'classes = [ { day = "Mon", start = "14pm", course = "X" } ]': "12-hour",
         'tolerance_minutes = 45': "classes",
         'this is not toml': "not valid TOML",
     }
@@ -170,7 +172,32 @@ def t10():
         '            { day = "Thur", start = "14:00", course = "ACCT-4321" } ]')
     assert loaded.by_slot == {("Tue", 14): "ACCT-4321", ("Thu", 14): "ACCT-4321"}, \
         loaded.by_slot
+    for raw, want in {"2:15pm": (14, 15), "14:45": (14, 45), "9:30": (9, 30),
+                      "12:30am": (0, 30), "12pm": (12, 0), 9: (9, 0)}.items():
+        assert config.normalize_start(raw) == want, (raw, config.normalize_start(raw))
 results.append(run("day and hour spellings people actually type are accepted", t10))
+
+
+def t10b():
+    text = config.render_schedule(
+        [("Mon", "9:30", "ENTR-4306"), ("Mon", 9, "RELI-3304"), ("Tue", "14:45", "ACCT-4321")])
+    # A class on the hour stays a bare number, which a build from before
+    # quarter hours can still read; only the others are written as times.
+    assert 'start =       9,' in text and 'start = "09:30"' in text, text
+    assert 'start = "14:45"' in text, text
+    back = config.parse_schedule(text)
+    assert [(m.day, m.start, m.course) for m in back.meetings] == [
+        ("Mon", "09:00", "RELI-3304"), ("Mon", "09:30", "ENTR-4306"),
+        ("Tue", "14:45", "ACCT-4321")], back.meetings
+    config.set_schedule(back)
+    try:
+        # Two classes in one hour are told apart by their minutes.
+        assert config.infer_course(datetime(2026, 9, 28, 9, 2)) == "RELI-3304"
+        assert config.infer_course(datetime(2026, 9, 28, 9, 34)) == "ENTR-4306"
+        assert config.infer_course(datetime(2026, 9, 29, 15, 20)) == "ACCT-4321"
+    finally:
+        config.set_schedule(None)
+results.append(run("a class can start on the quarter hour", t10b))
 
 
 def t11():
