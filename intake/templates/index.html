@@ -1124,9 +1124,15 @@ function renderRecord(s) {
     $("timer").textContent = s.now_class ? `${s.now_class} is on now` : "Ready to record";
     $("timer").classList.remove("stalled");
     $("timer").classList.add("idle");
-    $("recMeta").textContent = s.now_class
-      ? "Press record and it files under this course."
-      : nextClassText(s);
+    // The picker overrules the schedule, so the line under the headline has
+    // to say so. It promised "this course" while a course picked earlier sat
+    // in the picker, and that pick is where the lecture went.
+    const picked = $("courseSel").value;
+    $("recMeta").textContent = picked && picked !== s.now_class
+      ? `Press record and it files under ${picked}, the course picked below.`
+      : s.now_class
+        ? "Press record and it files under this course."
+        : nextClassText(s);
     $("recNote").textContent = "The mic takes a moment to open, so start before the lecture does.";
     levels.className = "levels";
     $("levelsLabel").textContent = "";
@@ -1759,6 +1765,10 @@ async function poll() {
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 
+// Redrawn on a pick rather than at the next poll, so the line under the
+// headline never names a different course from the picker.
+$("courseSel").onchange = () => { if (state) renderRecord(state); };
+
 $("recBtn").onclick = async () => {
   if (busy) return;
   busy = true;
@@ -1779,6 +1789,10 @@ $("recBtn").onclick = async () => {
     } else {
       const course = $("courseSel").value;
       const out = await api("/api/record/start", { course });
+      // A pick is for this recording only. Left in place it was sent again
+      // with the next one, and a page left open between two classes filed
+      // the second under the first.
+      $("courseSel").value = "";
       flash(`Recording from ${out.device} into ${out.planned}`);
     }
   } catch (e) {
@@ -1863,7 +1877,8 @@ const TOUR_STEPS = [
       + "to open. The level bars move when sound is arriving. Press it again to stop." },
   { target: "#courseSel", title: "Check the course",
     text: "Syllabus picks the course from your class schedule. Change it here if you "
-      + "record outside a scheduled class." },
+      + "record outside a scheduled class. A pick covers one recording, then it "
+      + "goes back to the schedule." },
   { target: "#week", card: true, title: "This week",
     text: "One chip for each class on your schedule. A filled chip has notes, so click "
       + "it to open them. If a class did not meet, hover its chip and click Didn’t meet." },
