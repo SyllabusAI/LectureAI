@@ -337,7 +337,8 @@ changing `.env`), and `uninstall` do what they say. Each profile has its
 own agent (`sous service install` for the other one).
 
 Only the panel is kept alive. Starting the watcher stays a click in the
-panel, because the watcher spends API credit and writes to Drive and Notion.
+panel, because the watcher spends API credit and writes to Drive and Notion,
+and it switches itself off again once the inbox is done.
 
 The first recording after installing asks for microphone permission on
 behalf of Python, the program the agent runs. Grant it once under System
@@ -563,7 +564,13 @@ open.
 intake watch
 ```
 
-Watches the inbox until Ctrl-C. It never dies on a bad file: the error goes to
+Processes what is in the inbox and anything that lands there, then stops by
+itself once it has handled a lecture and the inbox has stayed empty for 30
+seconds with no recording under way. Started before a lecture, it waits for
+that lecture. `intake watch --keep-running` watches until Ctrl-C instead, for
+an inbox a phone or sync client fills at any hour.
+
+It never dies on a bad file: the error goes to
 `pipeline.log`, the recording stays in `inbox/` for a retry, and the next one
 still gets processed. A lock file stops two watchers from racing on the same
 inbox. To stop a stray one:
