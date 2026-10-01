@@ -13,6 +13,7 @@
     intake notion --check   what the Notion integration sees
     intake notion --setup   add the Notion properties it needs
     intake calendar --check which calendars get deadlines, and their access
+    intake quality F        how hard a recording is to hear; tune the thresholds
     intake --profile sous   any of the above, against the sous profile
 
 Every subcommand hands its remaining arguments to the module it wraps, so
@@ -37,7 +38,7 @@ from intake import __version__, profiles
 USAGE = __doc__.split("\n\n")[1]
 
 COMMANDS = ("setup", "doctor", "record", "watch", "panel", "app", "service", "login",
-            "notion", "calendar")
+            "notion", "calendar", "quality")
 
 # Subcommands that cannot do anything useful without a schedule, so they fail
 # up front with one readable line rather than a traceback from deep inside.
@@ -175,6 +176,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "calendar":
         from intake import calendars
         return calendars.main(rest)
+    if command == "quality":
+        from intake import quality_tune
+        return quality_tune.main(rest)
     return 2  # unreachable
 
 

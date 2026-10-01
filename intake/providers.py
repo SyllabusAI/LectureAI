@@ -27,6 +27,7 @@ config constant.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -225,18 +226,41 @@ class ProxyRefused(RuntimeError):
         self.detail = detail or {}
 
 
-def _post_audio(url: str, token: str, path: Path, seconds: float, timeout: int):
+def _post_audio(url: str, token: str, path: Path, seconds: float, timeout: int,
+                quality: str = "standard"):
     """One multipart POST to the proxy. Replaced wholesale by the tests."""
     import requests
 
+    data = {"duration_seconds": f"{seconds:.3f}"}
+    # Only a second pass says anything: a standard request is sent exactly as
+    # every Mac before 0.6.0 sent it.
+    if quality != "standard":
+        data["quality"] = quality
     with path.open("rb") as fh:
         return requests.post(
             url,
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
             files={"audio": (path.name, fh, "audio/mp4")},
-            data={"duration_seconds": f"{seconds:.3f}"},
+            data=data,
             timeout=timeout,
         )
+
+
+@dataclass(frozen=True)
+class Scored:
+    """One chunk's transcript and what the service said about it.
+
+    `segments` is the raw per-segment scores (quality.py reads them), or None
+    when the leg that answered gives none: the OpenAI fallback and a second
+    pass both answer with text alone. `charged_seconds` is what came off the
+    month's allowance, three times the audio on a second pass.
+    """
+
+    text: str
+    segments: list[dict] | None = None
+    charged_seconds: float | None = None
+    provider: str = ""
+    quality: str = "standard"
 
 
 class ProxyProvider:
@@ -279,6 +303,18 @@ class ProxyProvider:
         self.diarization = False
 
     def transcribe_file(self, path: Path, prompt: str = "") -> str:
+        # `prompt` is deliberately dropped: the proxy fixes the upstream call
+        # and sends no prompt, for the reason in _transcribe_chunk.
+        return self.transcribe_scored(path).text
+
+    def transcribe_scored(self, path: Path, quality: str = "standard") -> Scored:
+        """The transcript with the service's scores for it.
+
+        quality="high" is the second pass on a chunk judged hard to hear:
+        gpt-4o-transcribe, charged at three times the chunk's length against
+        the same allowance (HIGH_QUALITY_RATE in syllabus-accounts). A refusal
+        is raised like any other, and the caller keeps the first transcript.
+        """
         # Imported here rather than at module scope: transcribe.py imports
         # this module, so the dependency only runs one way at import time.
         from intake import account
@@ -300,18 +336,32 @@ class ProxyProvider:
                 f"could not read how long {path.name} is, so it cannot be metered",
                 error="unreadable_audio",
             )
-        # `prompt` is deliberately dropped: the proxy fixes the upstream call
-        # and sends no prompt, for the reason in _transcribe_chunk.
+        # A standard request goes out with exactly the arguments it always
+        # had, so nothing that stands in for the transport has to know about
+        # second passes.
+        extra = {"quality": quality} if quality != "standard" else {}
         response = _post_audio(
-            f"{account.url()}/proxy/transcribe", acct.token, path, seconds, self.timeout
+            f"{account.url()}/proxy/transcribe", acct.token, path, seconds, self.timeout,
+            **extra,
         )
         if response.status_code != 200:
             raise _proxy_refusal(response)
         try:
-            return str(response.json().get("text", "")).strip()
+            payload = response.json()
         except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
             raise ProxyRefused("the account service sent back something unreadable",
                                error="bad_response", status=response.status_code)
+        segments = payload.get("segments")
+        charged = payload.get("charged_seconds")
+        return Scored(
+            text=str(payload.get("text", "")).strip(),
+            segments=segments if isinstance(segments, list) else None,
+            charged_seconds=charged if isinstance(charged, (int, float)) else None,
+            provider=str(payload.get("provider", "")),
+            quality=str(payload.get("quality", quality)),
+        )
 
 
 #: What each proxy refusal means to somebody reading a log or a panel.
