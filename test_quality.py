@@ -38,7 +38,7 @@ def run(label, fn):
 
 results = []
 SERVICE = "https://accounts.test"
-T = quality.Thresholds(unsure_logprob=-0.7, looping_ratio=2.4, no_speech=0.6,
+T = quality.Thresholds(unsure_logprob=-0.7, looping_ratio=2.4, no_speech=0.6, silence_logprob=-1.0,
                        quieter_db=8.0, hard_share=0.25, min_speech_seconds=30)
 
 
@@ -122,6 +122,16 @@ def t6():
 results.append(run("breaks and empty answers are not judged", t6))
 
 
+def t6b():
+    # Measured on a real, quiet class: whole sentences of lecture came back
+    # with no_speech_prob 0.85 at a confidence of -0.37. They are speech.
+    quiet_lecture = [seg(n, n + 6, lp=-0.37, ns=0.85) for n in range(0, 480, 6)]
+    v = quality.judge(quiet_lecture, None, T)
+    assert v.verdict == quality.CLEAR and v.speech_seconds == 480, v
+    assert quality.judge([seg(0, 60, text="  ")], None, T).verdict == quality.TOO_LITTLE
+results.append(run("a quiet recording's confident words count as speech, whatever no_speech says", t6b))
+
+
 def t7():
     looping = [seg(n, n + 6, lp=-0.3, cr=3.1) for n in range(0, 480, 6)]
     assert quality.judge(looping, None, T).verdict == quality.HARD
@@ -175,11 +185,13 @@ def t10():
         for _ in range(rng.randint(0, 60)):
             length = rng.choice([0.0, 0.5, 2, 4, 7, 11])
             segs.append(seg(at, at + length, lp=round(rng.uniform(-1.6, -0.05), 3),
-                            ns=round(rng.uniform(0, 1), 3), cr=round(rng.uniform(1, 3.2), 3)))
+                            ns=round(rng.uniform(0, 1), 3), cr=round(rng.uniform(1, 3.2), 3),
+                            text=rng.choice([" words", " ", ""])))
             at += length + rng.choice([0, 0, 1])
         lv = rng.choice([None, [rng.choice([None, round(rng.uniform(-45, -12), 1)]) for _ in segs]])
         t = quality.Thresholds(unsure_logprob=rng.choice([-1.0, -0.7, -0.5]), looping_ratio=2.4,
-                               no_speech=rng.choice([0.4, 0.6]), quieter_db=rng.choice([4.0, 8.0]),
+                               no_speech=rng.choice([0.4, 0.6]), silence_logprob=rng.choice([-1.0, -0.5]),
+                               quieter_db=rng.choice([4.0, 8.0]),
                                hard_share=rng.choice([0.1, 0.25, 0.4]),
                                min_speech_seconds=rng.choice([0, 30]))
         cases.append((segs, lv, t))
@@ -324,6 +336,8 @@ def t14():
         lambda: FakeResponse(200, {"text": " ".join(["w"] * config.TRUNCATION_WORD_THRESHOLD)}),
         # "first pass of chunk_002" is four words; one is under half of it.
         lambda: FakeResponse(200, {"text": "dropped"}),
+        # Looped on one sentence, as gpt-4o-transcribe did on a real class.
+        lambda: FakeResponse(200, {"text": "the cost of the marginal seller " * 40}),
     ):
         text, posted = lecture_run(True, answer)
         assert posted[-1] == ("chunk_002", "high"), posted

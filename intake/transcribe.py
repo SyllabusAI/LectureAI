@@ -445,6 +445,9 @@ def _second_pass(
         log(f"    second pass has {len(new.split())} words against {len(text.split())}; "
             f"it may have dropped lecture, so the first transcript is kept")
         return text
+    if quality.compression_ratio(new) > config.QUALITY_MAX_SECOND_PASS_RATIO:
+        log("    second pass repeats itself; first transcript kept")
+        return text
     cost = (f", {better.charged_seconds / 60:.0f} min of allowance"
             if better.charged_seconds else "")
     log(f"    second pass: {len(new.split())} words against {len(text.split())}{cost}")

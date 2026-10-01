@@ -160,6 +160,7 @@ def run(src: Path, out: Path, compare: str, yes: bool, t: quality.Thresholds,
         "thresholds": t.as_dict(),
         "defaults": quality.Thresholds().as_dict(),
         "min_word_ratio": config.QUALITY_MIN_WORD_RATIO,
+        "max_second_ratio": config.QUALITY_MAX_SECOND_PASS_RATIO,
         "chunks": [],
     }
     for r in rows:
@@ -177,6 +178,7 @@ def run(src: Path, out: Path, compare: str, yes: bool, t: quality.Thresholds,
                          for s in r["segments"]],
             "levels": r["levels"],
             "high": high["text"] if high else None,
+            "high_ratio": quality.compression_ratio(high["text"]) if high else None,
         })
     _write(out / "data.json", data)
     page = out / "report.html"
@@ -212,7 +214,8 @@ function judge(segments, levels, t) {
   if (!segments.length) return { verdict: "unscored", speech: 0, unsure: 0, room: 0, share: 0, lecturer: null, labels: [] };
   if (!levels || levels.length !== segments.length) levels = segments.map(() => null);
   const secs = (s) => Math.max(0, s.end - s.start);
-  const speech = segments.map((s) => s.no_speech_prob < t.no_speech && secs(s) > 0);
+  const speech = segments.map((s) => secs(s) > 0 && (s.text || "").trim() !== ""
+    && !(s.no_speech_prob >= t.no_speech && s.avg_logprob < t.silence_logprob));
   const unsure = segments.map((s) => s.avg_logprob < t.unsure_logprob || s.compression_ratio > t.looping_ratio);
   let speechSeconds = 0;
   segments.forEach((s, i) => { if (speech[i]) speechSeconds += secs(s); });
@@ -350,7 +353,8 @@ const CONTROLS = [
   ["unsure_logprob", "Unsure below this confidence (avg log-prob)", -1.5, -0.1, 0.05],
   ["hard_share", "Hard to hear at this share of speech", 0.05, 0.8, 0.05],
   ["quieter_db", "A voice this many dB quieter is the room", 2, 20, 1],
-  ["no_speech", "No speech at or above this probability", 0.2, 0.95, 0.05],
+  ["no_speech", "Silent at or above this no-speech probability", 0.2, 0.95, 0.05],
+  ["silence_logprob", "...and below this confidence", -2, -0.3, 0.05],
   ["looping_ratio", "Repeating itself above this ratio", 1.8, 4, 0.1],
   ["min_speech_seconds", "Too little to judge under (seconds)", 0, 120, 5],
 ];
@@ -405,8 +409,10 @@ for (const c of DATA.chunks) {
     const second = el("div");
     const count = (x) => x.split(/\s+/).filter(Boolean).length;
     const few = count(c.high) < DATA.min_word_ratio * count(c.text);
+    const loops = c.high_ratio > DATA.max_second_ratio;
     second.append(el("h3", {}, `Second pass (gpt-4o-transcribe) · ${count(c.high)} words against ${count(c.text)}` +
-      (few ? " · too few, the first pass would be kept" : "")), el("div", { className: "words" }, c.high));
+      (few ? " · too few, the first pass would be kept" : "") +
+      (loops ? " · repeats itself, the first pass would be kept" : "")), el("div", { className: "words" }, c.high));
     texts.append(second);
   }
   const mine = el("div", { className: "row mine" });
@@ -466,7 +472,7 @@ function update() {
   document.getElementById("agree").textContent = a.marked ? `Matches your calls on ${a.match} of ${a.marked}` : "";
   const cfg = { thresholds: t, calls, recording: DATA.recording };
   document.getElementById("export").value =
-    `QUALITY_UNSURE_LOGPROB = ${t.unsure_logprob}\nQUALITY_LOOPING_RATIO = ${t.looping_ratio}\nQUALITY_NO_SPEECH = ${t.no_speech}\n` +
+    `QUALITY_UNSURE_LOGPROB = ${t.unsure_logprob}\nQUALITY_LOOPING_RATIO = ${t.looping_ratio}\nQUALITY_NO_SPEECH = ${t.no_speech}\nQUALITY_SILENCE_LOGPROB = ${t.silence_logprob}\n` +
     `QUALITY_QUIETER_DB = ${t.quieter_db}\nQUALITY_HARD_SHARE = ${t.hard_share}\nQUALITY_MIN_SPEECH_SECONDS = ${t.min_speech_seconds}\n\n` +
     JSON.stringify(cfg);
 }

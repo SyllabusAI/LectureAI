@@ -539,8 +539,12 @@ QUALITY_SECOND_PASS = False
 QUALITY_UNSURE_LOGPROB = -0.7
 # ...or above this compression ratio, which is the model repeating itself.
 QUALITY_LOOPING_RATIO = 2.4
-# A segment at or above this no-speech probability is a pause, not speech.
+# A segment is a pause, not speech, when its no-speech probability is at or
+# above QUALITY_NO_SPEECH AND its confidence is under QUALITY_SILENCE_LOGPROB
+# (whisper's own rule). The probability alone climbs past 0.8 on real lecture
+# when the recording is quiet.
 QUALITY_NO_SPEECH = 0.6
+QUALITY_SILENCE_LOGPROB = -1.0
 # An unsure segment this many dB quieter than the lecturer is the room.
 QUALITY_QUIETER_DB = 8.0
 # A chunk is hard to hear when this share of its speech is the lecturer unsure.
@@ -552,6 +556,10 @@ QUALITY_MIN_SPEECH_SECONDS = 30
 # side comment) that the first pass had; losing lecture is worse than a few
 # unsure words.
 QUALITY_MIN_WORD_RATIO = 0.5
+# ...or when the second pass is this repetitive (quality.compression_ratio):
+# gpt-4o-transcribe can loop on the same sentences. Plain lecture runs 2.3 to
+# 2.6; a looped second pass on a real class ran 3.8.
+QUALITY_MAX_SECOND_PASS_RATIO = 3.0
 
 # --- Output handling ---
 

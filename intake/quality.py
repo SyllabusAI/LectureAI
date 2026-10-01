@@ -5,9 +5,11 @@ scores back with the text (syllabus-accounts, /proxy/transcribe):
 
 - avg_logprob: how sure the model was of the words. Clear speech sits
   around -0.2 to -0.4; a mumbled, accented or distant voice drops well below.
-- no_speech_prob: how sure it was there was speech at all. A high value is
-  a pause, a cough, or the room between sentences, and says nothing about
-  how hard the lecturer is to follow.
+- no_speech_prob: how sure it was there was speech at all. On its own it is
+  not to be trusted: on a quiet recording it climbs past 0.8 on whole
+  sentences of lecture (measured on a real class, 2026-10-01). Whisper itself
+  only calls a stretch silent when this is high AND the words are unsure,
+  and so does judge() below; a stretch with no words at all is silent too.
 - compression_ratio: how repetitive the text is. It climbs when the model
   loops ("and the and the and the") on audio it cannot make out.
 
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import math
 import subprocess
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -94,6 +97,7 @@ class Thresholds:
     unsure_logprob: float = field(default_factory=lambda: config.QUALITY_UNSURE_LOGPROB)
     looping_ratio: float = field(default_factory=lambda: config.QUALITY_LOOPING_RATIO)
     no_speech: float = field(default_factory=lambda: config.QUALITY_NO_SPEECH)
+    silence_logprob: float = field(default_factory=lambda: config.QUALITY_SILENCE_LOGPROB)
     quieter_db: float = field(default_factory=lambda: config.QUALITY_QUIETER_DB)
     hard_share: float = field(default_factory=lambda: config.QUALITY_HARD_SHARE)
     min_speech_seconds: float = field(default_factory=lambda: config.QUALITY_MIN_SPEECH_SECONDS)
@@ -150,7 +154,9 @@ def judge(segments: list[Segment], levels: list[float | None] | None = None,
     if levels is None or len(levels) != len(segments):
         levels = [None] * len(segments)
 
-    speech = [s.no_speech_prob < t.no_speech and s.seconds > 0 for s in segments]
+    speech = [s.seconds > 0 and bool(s.text.strip())
+              and not (s.no_speech_prob >= t.no_speech and s.avg_logprob < t.silence_logprob)
+              for s in segments]
     unsure = [s.avg_logprob < t.unsure_logprob or s.compression_ratio > t.looping_ratio
               for s in segments]
     speech_seconds = sum(s.seconds for s, sp in zip(segments, speech) if sp)
@@ -207,6 +213,17 @@ def _weighted_median(pairs: list[tuple[float, float]]) -> float:
         if running >= half:
             return value
     return pairs[-1][0]
+
+
+def compression_ratio(text: str) -> float:
+    """How repetitive a whole transcript is: its size over its zlib size.
+
+    Whisper scores each segment this way; this is the same measure over a
+    whole chunk, for a second pass that comes back with no segments. On a
+    real class the first passes ran 2.3 to 2.6, and a second pass that had
+    looped on the same sentences ran 3.8."""
+    raw = text.encode("utf-8")
+    return len(raw) / max(1, len(zlib.compress(raw)))
 
 
 # --- Loudness ---------------------------------------------------------------
