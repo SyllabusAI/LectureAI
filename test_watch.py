@@ -1061,6 +1061,136 @@ def t33():
 results.append(run("process() resumes a halved chunk and cleans up every part after", t33))
 
 
+
+class Watcher:
+    """run_watcher() on a thread, with process() and its preflight faked.
+
+    `outcomes` decides what each processed file does: "ok" files it into
+    processed/, "fail" raises and leaves it in the inbox, "interrupt" stands
+    in for Ctrl-C. The idle wait is zero so a test is not 30 seconds long.
+    """
+
+    def __init__(self, outcomes=None, recording=lambda: False, keep_running=False):
+        import threading
+        self.outcomes = list(outcomes or [])
+        self.processed = []
+        self.recording_checks = 0
+        self._recording = recording
+        self._saved = {name: getattr(watch, name) for name in (
+            "preflight", "process", "wait_until_stable", "recording_in_progress",
+            "IDLE_EXIT_SECONDS")}
+        watch.preflight = lambda interactive: None
+        watch.wait_until_stable = lambda path: None
+        watch.process = self._process
+        watch.recording_in_progress = self._recording_in_progress
+        watch.IDLE_EXIT_SECONDS = 0
+        self.result = None
+        self.thread = threading.Thread(
+            target=self._run, args=(keep_running,), daemon=True)
+        self.thread.start()
+
+    def _run(self, keep_running):
+        self.result = watch.run_watcher(keep_running=keep_running)
+
+    def _process(self, path, interactive=True):
+        self.processed.append(Path(path).name)
+        outcome = self.outcomes.pop(0) if self.outcomes else "ok"
+        if outcome == "interrupt":
+            raise KeyboardInterrupt
+        if outcome == "fail":
+            raise RuntimeError("upload failed")
+        config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+        Path(path).rename(config.PROCESSED_DIR / Path(path).name)
+        return {}
+
+    def _recording_in_progress(self):
+        self.recording_checks += 1
+        return self._recording()
+
+    def stopped_within(self, seconds):
+        self.thread.join(seconds)
+        return not self.thread.is_alive()
+
+    def restore(self):
+        for name, value in self._saved.items():
+            setattr(watch, name, value)
+
+
+def watcher_test(fn):
+    def wrapped():
+        clear()
+        watchers = []
+        try:
+            fn(lambda **kw: watchers.append(Watcher(**kw)) or watchers[-1])
+        finally:
+            for w in watchers:
+                w.restore()
+    return wrapped
+
+
+# 34. The watcher switches itself off once the lecture it was started for is
+#     done, rather than running for days spending nothing but its welcome.
+@watcher_test
+def t34(start):
+    recording()
+    w = start()
+    assert w.stopped_within(10), "the watcher kept running after the inbox was done"
+    assert w.result == 0, w.result
+    assert w.processed == ["ACCT-4321_2026-09-15_1400.m4a"], w.processed
+results.append(run("the watcher stops by itself once the inbox is done", t34))
+
+
+# 35. Started ahead of the lecture, with nothing in the inbox, it waits for
+#     the lecture instead of quitting on the spot.
+@watcher_test
+def t35(start):
+    w = start()
+    assert not w.stopped_within(2.5), "the watcher quit before any lecture arrived"
+    recording()
+    assert w.stopped_within(10), "the watcher kept running after its lecture"
+    assert w.processed == ["ACCT-4321_2026-09-15_1400.m4a"], w.processed
+results.append(run("a watcher started before the lecture waits for it", t35))
+
+
+# 36. A recording under way will land in the inbox when it ends, so the
+#     watcher does not stop while one is going.
+@watcher_test
+def t36(start):
+    calls = {"n": 0}
+
+    def busy():
+        calls["n"] += 1
+        return calls["n"] <= 2
+    recording()
+    w = start(recording=busy)
+    assert w.stopped_within(10), "the watcher never stopped"
+    assert w.recording_checks >= 3, f"stopped mid-recording: {w.recording_checks} checks"
+results.append(run("the watcher does not stop while a recording is under way", t36))
+
+
+# 37. A lecture that failed waits in the inbox for a deliberate retry. It must
+#     neither keep the watcher alive nor be billed again on its own.
+@watcher_test
+def t37(start):
+    path = recording()
+    w = start(outcomes=["fail"])
+    assert w.stopped_within(10), "a failed lecture kept the watcher alive"
+    assert w.processed == [path.name], f"the failure was retried: {w.processed}"
+    assert path.exists(), "the failed lecture left the inbox"
+results.append(run("a failed lecture neither keeps the watcher on nor reruns", t37))
+
+
+# 38. --keep-running is the old behavior: watch until Ctrl-C.
+@watcher_test
+def t38(start):
+    recording()
+    w = start(keep_running=True, outcomes=["ok", "interrupt"])
+    assert not w.stopped_within(2.5), "--keep-running stopped once the inbox was done"
+    recording("ENTR-3306_2026-09-15_1200.m4a")
+    assert w.stopped_within(10), "Ctrl-C did not stop it"
+    assert len(w.processed) == 2, w.processed
+results.append(run("--keep-running watches until Ctrl-C", t38))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

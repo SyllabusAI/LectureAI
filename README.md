@@ -238,6 +238,17 @@ thing it stores of its own is the list of classes that did not meet, below:
   answers questions and builds study guides from every transcript and
   summary in Drive. Nothing in it is wired up yet, and it says so.
 
+The first time a configured dashboard opens in a browser, a **guided tour**
+walks through it one card at a time: Record, the course picker, This week,
+the watcher, the tiles, the recent list, the study assistant, and Setup. A
+ring frames each card and the rest of the page dims. Arrow keys move, Esc
+closes, and **Tour** in the rail replays it. Finishing or skipping it is
+remembered in that browser (`syllabus-tour-seen` in localStorage), so the
+phone address gets its own first look. A stop whose card is not on the page
+is left out. The last stop links to the student guide at
+`maincoursemedia.com/syllabus/guide/`, which covers the same ground in full;
+Sous has no guide, so its tour ends without the link.
+
 Each course has a color, assigned in schedule order so it does not change
 from week to week. The six colors were run through a colorblind-safety
 check against both card surfaces, and identity never rests on color alone:
@@ -326,7 +337,8 @@ changing `.env`), and `uninstall` do what they say. Each profile has its
 own agent (`sous service install` for the other one).
 
 Only the panel is kept alive. Starting the watcher stays a click in the
-panel, because the watcher spends API credit and writes to Drive and Notion.
+panel, because the watcher spends API credit and writes to Drive and Notion,
+and it switches itself off again once the inbox is done.
 
 The first recording after installing asks for microphone permission on
 behalf of Python, the program the agent runs. Grant it once under System
@@ -552,7 +564,13 @@ open.
 intake watch
 ```
 
-Watches the inbox until Ctrl-C. It never dies on a bad file: the error goes to
+Processes what is in the inbox and anything that lands there, then stops by
+itself once it has handled a lecture and the inbox has stayed empty for 30
+seconds with no recording under way. Started before a lecture, it waits for
+that lecture. `intake watch --keep-running` watches until Ctrl-C instead, for
+an inbox a phone or sync client fills at any hour.
+
+It never dies on a bad file: the error goes to
 `pipeline.log`, the recording stays in `inbox/` for a retry, and the next one
 still gets processed. A lock file stops two watchers from racing on the same
 inbox. To stop a stray one:

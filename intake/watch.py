@@ -1,7 +1,13 @@
 """Orchestrator: audio file in, transcript and summary out, filed in Drive.
 
     intake watch --once ~/.intake/inbox/lecture.m4a   # one file, then exit
-    intake watch                                          # watch inbox/ until Ctrl-C
+    intake watch                                          # until the inbox is done
+    intake watch --keep-running                           # watch inbox/ until Ctrl-C
+
+Once it has handled a lecture and the inbox has stayed empty for a short
+while, with no recording under way, the watcher exits by itself. It spends
+API credit and writes to Drive and Notion, so it should not sit running for
+days after the one lecture somebody started it for.
 
 The watcher never dies on a bad file. Anything that fails is logged and left
 in inbox/ so it can be retried, and the next recording still gets processed.
@@ -28,6 +34,7 @@ from intake import account
 from intake import config
 from intake import destinations
 from intake import providers
+from intake import record
 from intake import summarize
 from intake import transcribe
 from intake import upload as drive
@@ -415,6 +422,19 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     }
 
 
+# How long the inbox has to stay empty, after the last lecture is done, before
+# the watcher stops. Long enough for a sync client's rename or the next file
+# of a batch to land, short enough that a finished watcher does not linger.
+IDLE_EXIT_SECONDS = 30
+
+
+def recording_in_progress() -> bool:
+    """Whether a recording is under way that will land in the inbox when it ends."""
+    state = record._read_state()
+    return state is not None and record._process_is_recording(
+        state["pid"], state["staging"])
+
+
 class InboxHandler(FileSystemEventHandler):
     """Queue new audio files for the main thread to process one at a time."""
 
@@ -437,12 +457,17 @@ class InboxHandler(FileSystemEventHandler):
             self._enqueue(event.dest_path)
 
 
-def run_watcher() -> int:
+def run_watcher(keep_running: bool = False) -> int:
     lock = acquire_single_instance_lock()  # noqa: F841 — held for process life
     preflight(interactive=False)
 
     work: queue.Queue = queue.Queue()
     seen: set[Path] = set()
+    # Left in the inbox after an error. They wait for a deliberate retry, so
+    # they must not keep the watcher alive or be picked up again on their own.
+    failed: set[Path] = set()
+    handled_any = False
+    last_busy = time.monotonic()
 
     for existing in sorted(config.INBOX_DIR.iterdir()):
         if is_audio(existing):
@@ -454,16 +479,37 @@ def run_watcher() -> int:
     observer.start()
     log(f"watching {config.INBOX_DIR} for "
         f"{', '.join(sorted(config.AUDIO_EXTENSIONS))}; Ctrl-C to stop")
+    if not keep_running:
+        log("  stops by itself once the inbox is done")
 
     try:
         while True:
             try:
                 path = work.get(timeout=1)
             except queue.Empty:
-                continue
+                # Nothing has been handled yet: somebody started the watcher
+                # ahead of the lecture, so wait for it however long it takes.
+                if keep_running or not handled_any:
+                    continue
+                if time.monotonic() - last_busy < IDLE_EXIT_SECONDS:
+                    continue
+                # A file the observer missed still counts as work to do.
+                waiting = [p for p in sorted(config.INBOX_DIR.iterdir())
+                           if is_audio(p) and p.resolve() not in failed]
+                for missed in waiting:
+                    work.put(missed)
+                if waiting or recording_in_progress():
+                    last_busy = time.monotonic()
+                    continue
+                log("inbox is done; stopping")
+                break
+
+            last_busy = time.monotonic()
 
             resolved = path.resolve()
-            if resolved in seen or not path.exists():
+            # A failed file stays failed for this run: an event for it that
+            # was still queued would bill the same lecture again.
+            if resolved in seen or resolved in failed or not path.exists():
                 continue
             seen.add(resolved)
 
@@ -478,11 +524,14 @@ def run_watcher() -> int:
                 write_log_line("ERROR", path.name, str(exc))
                 if path.exists():
                     log(f"  left {path.name} in inbox for a retry")
+                    failed.add(resolved)
                 seen.discard(resolved)
             finally:
                 # Idle again either way, so the panel stops showing a stage
                 # that finished or died.
                 clear_status()
+                handled_any = True
+                last_busy = time.monotonic()
     except KeyboardInterrupt:
         log("stopping")
     finally:
@@ -498,6 +547,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--once", metavar="FILE",
                         help="process a single recording and exit")
+    parser.add_argument("--keep-running", action="store_true",
+                        help="keep watching after the inbox is done, until Ctrl-C")
     args = parser.parse_args(argv)
 
     if args.once:
@@ -514,7 +565,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        return run_watcher()
+        return run_watcher(keep_running=args.keep_running)
     except RuntimeError as exc:
         log(f"error: {exc}")
         return 1

@@ -552,6 +552,88 @@ await run("a relayed page writes every request under its device path", async () 
   await page.close();
 });
 
+// --- The guided tour -------------------------------------------------------
+
+/** Run what the page scheduled until the tour has had its chance to start. */
+async function drawDashboard(page) {
+  await page.settle();
+  await page.fire();
+}
+
+await run("the tour starts once on a configured dashboard, and Done keeps it closed", async () => {
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({ "/api/status": like("/api/status", { configured: true }) }),
+  });
+  await drawDashboard(page);
+  const tour = page.$("tour");
+  assert(!tour.hidden, "a first visit to a configured dashboard showed no tour");
+  equal(page.$("tourCount").textContent.split(" of ")[0], "1", "the tour did not open on its first stop");
+  equal(page.$("tourBack").hidden, true, "the first stop offers Back to nowhere");
+
+  // Walk it to the end the way a person would.
+  let guard = 0;
+  while (!tour.hidden && guard++ < 20) page.$("tourNext").click();
+  assert(tour.hidden, "Next never reached the end of the tour");
+  equal(page.window.localStorage.getItem("syllabus-tour-seen"), "1",
+    "finishing the tour did not remember it, so it comes back on every visit");
+
+  // Later polls redraw the dashboard; none of them may bring it back.
+  await page.window.poll();
+  await drawDashboard(page);
+  assert(tour.hidden, "a later poll started the tour again");
+  await page.close();
+});
+
+await run("the tour waits for setup, and stays closed once seen", async () => {
+  const unset = loadPage(DIR, "index.html", {
+    routes: indexRoutes({ "/api/status": like("/api/status", { configured: false }) }),
+  });
+  await drawDashboard(unset);
+  assert(unset.$("tour").hidden, "the tour pointed at a dashboard that cannot record yet");
+  await unset.close();
+
+  const seen = loadPage(DIR, "index.html", {
+    routes: indexRoutes({ "/api/status": like("/api/status", { configured: true }) }),
+  });
+  // Before the first status arrives, as a returning visitor's browser would have it.
+  seen.window.localStorage.setItem("syllabus-tour-seen", "1");
+  await drawDashboard(seen);
+  assert(seen.$("tour").hidden, "the tour came back for someone who already finished it");
+  await seen.close();
+});
+
+await run("the Tour button replays it, Esc closes it, and missing cards are skipped", async () => {
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({ "/api/status": like("/api/status", { configured: true }) }),
+  });
+  page.window.localStorage.setItem("syllabus-tour-seen", "1");
+  await drawDashboard(page);
+  const full = () => Number(page.$("tourCount").textContent.split(" of ")[1]);
+
+  page.$("tourBtn").click();
+  assert(!page.$("tour").hidden, "the Tour button did not open the tour");
+  const stops = full();
+  page.document.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "ArrowRight" }));
+  equal(page.$("tourCount").textContent, `2 of ${stops}`, "the arrow key did not move to the next stop");
+  page.document.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "Escape" }));
+  assert(page.$("tour").hidden, "Esc did not close the tour");
+
+  // A card that is not on the page is left out, not pointed at.
+  page.$("assistant").remove();
+  page.$("tourBtn").click();
+  equal(full(), stops - 1, "the tour kept a stop for a card that is not there");
+  const titles = [];
+  for (let k = 0; k < stops - 1; k++) {
+    titles.push(page.$("tourTitle").textContent);
+    if (k < stops - 2) page.$("tourNext").click();
+  }
+  assert(!titles.includes("Study assistant"), `the tour still stops at the missing card: ${titles}`);
+  page.$("tourBack").click();
+  page.$("tourSkip").click();
+  assert(page.$("tour").hidden, "Skip did not close the tour");
+  await page.close();
+});
+
 // --- The lid: sleep ends a recording, and caffeinate cannot stop it --------
 
 await run("the Setup page warns not to close the lid while recording", async () => {

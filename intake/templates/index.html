@@ -567,6 +567,53 @@
   /* The same banner, sat above the record button instead of the page. */
   .flash.rec-flash { margin: 0 0 14px; border-radius: 12px; }
 
+  /* Guided tour ------------------------------------------------------- */
+  /* A first-run walk around the dashboard, one card at a time. The ring is
+     one element whose huge shadow dims everything but the card it frames,
+     so no second copy of the page is ever drawn. It is fixed, not absolute,
+     and redrawn on scroll and resize from the target's own rectangle. */
+  .tour { position: fixed; inset: 0; z-index: 100; }
+  .tour-ring {
+    position: fixed; border-radius: 18px; pointer-events: none;
+    box-shadow: 0 0 0 3px var(--brand), 0 0 0 9999px rgba(12, 9, 20, .55);
+    transition: top .25s ease, left .25s ease, width .25s ease, height .25s ease;
+  }
+  .tour-ring.center { width: 0; height: 0; top: 50%; left: 50%; box-shadow: 0 0 0 9999px rgba(12, 9, 20, .55); }
+  .tour-card {
+    position: fixed; width: min(360px, calc(100vw - 32px));
+    background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 16px; box-shadow: var(--shadow); padding: 18px 20px 16px;
+    transition: top .25s ease, left .25s ease;
+  }
+  .tour-card:focus { outline: none; }
+  .tour-count { font-size: 10.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--brand-deep); }
+  .tour-card h3 { margin: 6px 0 6px; font-size: 16px; font-weight: 600; letter-spacing: -.015em; }
+  .tour-card p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--muted); }
+  .tour-card p a { color: var(--brand-deep); font-weight: 500; }
+  .tour-dots { display: flex; gap: 5px; margin-top: 14px; }
+  .tour-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+  .tour-dots i.on { background: var(--brand); }
+  .tour-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  .tour-row .skip { margin-right: auto; }
+  .tour-row button {
+    font: inherit; font-size: 12.5px; padding: 7px 14px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
+  .tour-row button.skip { border-color: transparent; color: var(--muted); padding-inline: 4px; }
+  .tour-row button.skip:hover { color: var(--ink); }
+  .tour-row button.next { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 500; }
+  .tour-row button[hidden] { display: none; }
+  button.nav { font: inherit; font-size: 13.5px; border: none; background: none; cursor: pointer; width: 100%; text-align: left; }
+  @media (max-width: 560px) {
+    /* A phone has no room beside a card, so the words sit at the bottom
+       of the screen and the ring does the pointing. */
+    .tour-card { left: 16px !important; right: 16px; top: auto !important; bottom: 16px; width: auto; }
+    button.nav { width: auto; font-size: 12.5px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tour-ring, .tour-card { transition: none; }
+  }
+
   /* Phones. Last on purpose: these override the rules above. ------------- */
   @media (max-width: 560px) {
     .main { padding: 16px 14px 40px; }
@@ -632,6 +679,12 @@
       </svg>
       Setup
     </a>
+    <button type="button" class="nav" id="tourBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.6M12 17h.01"/>
+      </svg>
+      Tour
+    </button>
 
     <h2 id="coursesHead" hidden>Courses</h2>
     <div id="sideCourses"></div>
@@ -795,6 +848,22 @@
     </section>
 
   </main>
+</div>
+
+<!-- The guided tour. Empty until tour.start() fills it; see the script. -->
+<div class="tour" id="tour" hidden>
+  <div class="tour-ring" id="tourRing"></div>
+  <div class="tour-card" id="tourCard" role="dialog" aria-modal="true" aria-labelledby="tourTitle" tabindex="-1">
+    <div class="tour-count" id="tourCount"></div>
+    <h3 id="tourTitle"></h3>
+    <p id="tourText"></p>
+    <div class="tour-dots" id="tourDots" aria-hidden="true"></div>
+    <div class="tour-row">
+      <button type="button" class="skip" id="tourSkip">Skip tour</button>
+      <button type="button" id="tourBack">Back</button>
+      <button type="button" class="next" id="tourNext">Next</button>
+    </div>
+  </div>
 </div>
 
 <script nonce="{{ csp_nonce }}">
@@ -1631,6 +1700,7 @@ function render(s) {
   renderPipeline(s);
   renderAssistant(s);
   renderToday(s);
+  maybeStartTour(s);
 
   const insightsKey = JSON.stringify(s.insights) + courseFilter;
   if (insightsKey !== lastInsights) {
@@ -1766,6 +1836,187 @@ for (const b of document.querySelectorAll("[data-theme-choice]")) {
   b.onclick = () => applyTheme(b.dataset.themeChoice);
 }
 markTheme();
+
+// Guided tour --------------------------------------------------------------
+// Runs once, the first time a configured dashboard is drawn in this browser,
+// and again whenever the Tour button in the rail is pressed. Each stop names
+// a card by selector; a stop whose card is not on the page is skipped rather
+// than pointing at nothing. Remembered per browser, like the theme, so the
+// phone address gets its own first look.
+const TOUR_KEY = "syllabus-tour-seen";
+const GUIDE_URL = "https://maincoursemedia.com/syllabus/guide/";
+const PROFILE_NAME = {{ profile.name|tojson }};
+const PROFILE_TITLE = {{ profile.title|tojson }};
+
+function guideLink(anchor, words) {
+  // Sous has no public guide; its tour just ends without the link.
+  if (PROFILE_NAME !== "syllabus") return "";
+  return ` <a href="${GUIDE_URL}#${anchor}" target="_blank" rel="noopener">${words}</a>`;
+}
+
+const TOUR_STEPS = [
+  { title: `Welcome to ${PROFILE_TITLE}`,
+    text: "This is your dashboard. Take a one-minute tour of what each card does. "
+      + "Press the arrow keys to move, or Esc to close." },
+  { target: ".record-card", title: "Record a lecture",
+    text: "Press the purple button before the professor starts. The mic takes a second "
+      + "to open. The level bars move when sound is arriving. Press it again to stop." },
+  { target: "#courseSel", title: "Check the course",
+    text: "Syllabus picks the course from your class schedule. Change it here if you "
+      + "record outside a scheduled class." },
+  { target: "#week", card: true, title: "This week",
+    text: "One chip for each class on your schedule. A filled chip has notes, so click "
+      + "it to open them. If a class did not meet, hover its chip and click Didn’t meet." },
+  { target: "#watchBtn", card: true, title: "Turn on the watcher",
+    text: "The watcher turns each recording into notes and switches itself off when "
+      + "they are all done. While it works, the "
+      + "five steps light up in turn: copy, transcribe, summarize, Drive, and to-dos." },
+  { target: "#tiles", title: "Your numbers",
+    text: "Lectures recorded this week, lectures filed in all, your streak, and hours of "
+      + "audio. Classes you mark as canceled do not break the streak." },
+  { target: "#recentCard", title: "Your notes",
+    text: "Every lecture lands in Google Drive, in the Lecture Notes folder for its course. "
+      + "Open any of them from here. Click a course above the list to show only that course." },
+  { target: "#assistant", title: "Study assistant",
+    text: "Pick a course and ask anything about your lectures, or press a starter for a "
+      + "study guide or a quiz. Each answer names the lecture it came from." },
+  { target: 'a.nav[href$="/setup"]', title: "Setup",
+    text: "Change your class schedule, microphone, calendars, and Notion here. Your "
+      + "phone address is here too, so you can press Record from your phone." },
+  { target: "#tourBtn", title: "That is the tour",
+    text: "Press Tour to see it again at any time." + guideLink("top", "Read the full guide") },
+];
+
+const tour = {
+  steps: [], i: 0, lastFocus: null,
+
+  start() {
+    this.steps = TOUR_STEPS.filter((st) => !st.target || document.querySelector(st.target));
+    this.i = 0;
+    this.lastFocus = document.activeElement;
+    $("tour").hidden = false;
+    this.draw();
+    $("tourCard").focus();
+  },
+
+  end() {
+    $("tour").hidden = true;
+    try { localStorage.setItem(TOUR_KEY, "1"); } catch (e) { /* shown again next time, no harm */ }
+    if (this.lastFocus && this.lastFocus.focus) this.lastFocus.focus();
+  },
+
+  go(delta) {
+    const next = this.i + delta;
+    if (next < 0) return;
+    if (next >= this.steps.length) return this.end();
+    this.i = next;
+    this.draw();
+  },
+
+  // The element the ring frames: the card around the target when the step
+  // asks for it, so "This week" frames the whole card and not only the grid.
+  frame(step) {
+    const el = document.querySelector(step.target);
+    if (!el) return null;
+    return step.card ? (el.closest(".card") || el) : el;
+  },
+
+  draw() {
+    const step = this.steps[this.i];
+    const last = this.i === this.steps.length - 1;
+    $("tourCount").textContent = `${this.i + 1} of ${this.steps.length}`;
+    $("tourTitle").textContent = step.title;
+    // Every string above is written here, never taken from the status, so
+    // innerHTML carries only the guide link this file built.
+    $("tourText").innerHTML = step.text;
+    $("tourDots").innerHTML = this.steps.map((_, k) => `<i class="${k === this.i ? "on" : ""}"></i>`).join("");
+    $("tourBack").hidden = this.i === 0;
+    $("tourSkip").hidden = last;
+    $("tourNext").textContent = last ? "Done" : (this.i === 0 ? "Start the tour" : "Next");
+    const el = step.target ? this.frame(step) : null;
+    if (el) {
+      const r = el.getBoundingClientRect();
+      // Only scroll when the card is not already in full view, and without
+      // smoothing, so the ring is measured where the card actually stops.
+      if (r.top < 60 || r.bottom > window.innerHeight - 20) {
+        el.scrollIntoView({ block: "center", behavior: "instant" });
+      }
+    }
+    this.place();
+  },
+
+  place() {
+    if ($("tour").hidden) return;
+    const step = this.steps[this.i];
+    const ring = $("tourRing"), card = $("tourCard");
+    const el = step.target ? this.frame(step) : null;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const cw = card.offsetWidth, ch = card.offsetHeight;
+    if (!el) {
+      ring.className = "tour-ring center";
+      ring.removeAttribute("style");
+      card.style.left = `${Math.max(16, (vw - cw) / 2)}px`;
+      card.style.top = `${Math.max(16, (vh - ch) / 2)}px`;
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    const pad = 6;
+    ring.className = "tour-ring";
+    ring.style.top = `${r.top - pad}px`;
+    ring.style.left = `${r.left - pad}px`;
+    ring.style.width = `${r.width + pad * 2}px`;
+    ring.style.height = `${r.height + pad * 2}px`;
+    // Below the target if it fits, then above, then beside. A card too tall
+    // for any of those gets the words on whichever side has more room,
+    // pushed into the window, so they cover as little of it as they can.
+    const gap = 14, edge = 16;
+    const below = vh - edge - (r.bottom + gap), above = r.top - gap - edge;
+    let top, left = r.left;
+    if (below >= ch) top = r.bottom + gap;
+    else if (above >= ch) top = r.top - gap - ch;
+    else if (r.right + gap + cw <= vw - edge) { top = r.top; left = r.right + gap; }
+    else if (r.left - gap - cw >= edge) { top = r.top; left = r.left - gap - cw; }
+    else top = below >= above ? vh - edge - ch : edge;
+    top = Math.min(Math.max(edge, top), vh - ch - edge);
+    left = Math.min(Math.max(edge, left), vw - cw - edge);
+    card.style.top = `${top}px`;
+    card.style.left = `${left}px`;
+  },
+};
+
+$("tourNext").onclick = () => tour.go(1);
+$("tourBack").onclick = () => tour.go(-1);
+$("tourSkip").onclick = () => tour.end();
+$("tourBtn").onclick = () => tour.start();
+// A click on the dimmed page closes the tour; a click on the card does not.
+$("tour").onclick = (e) => { if (e.target === $("tour")) tour.end(); };
+document.addEventListener("keydown", (e) => {
+  if ($("tour").hidden) return;
+  if (e.key === "Escape") { e.preventDefault(); tour.end(); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); tour.go(1); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); tour.go(-1); }
+  else if (e.key === "Tab") {
+    // Keep focus inside the dialog while it is open.
+    const items = [...$("tourCard").querySelectorAll("button:not([hidden]), a")];
+    const first = items[0], lastItem = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); lastItem.focus(); }
+    else if (!e.shiftKey && document.activeElement === lastItem) { e.preventDefault(); first.focus(); }
+  }
+});
+window.addEventListener("resize", () => tour.place());
+window.addEventListener("scroll", () => tour.place(), { passive: true });
+
+// The first draw of a configured dashboard starts it once. This runs in the
+// middle of render(), so the start waits a tick for the cards to be filled
+// and the ring to frame them at full size.
+let tourChecked = false;
+function maybeStartTour(s) {
+  if (tourChecked || !s.configured) return;
+  tourChecked = true;
+  let seen = true;
+  try { seen = localStorage.getItem(TOUR_KEY) === "1"; } catch (e) { /* no storage, no autostart */ }
+  if (!seen) setTimeout(() => tour.start(), 0);
+}
 
 poll();
 refreshAllowance();
