@@ -134,6 +134,40 @@ await run("a course the user had picked is kept only while it exists", async () 
   await page.close();
 });
 
+// --- A lecture filed under the wrong course can be moved -------------------
+
+await run("a recent lecture can be moved to another course", async () => {
+  const name = "ENTR-3306_2026-10-01_Producer-Surplus-And-Market";
+  const row = {
+    when: "2026-10-01T14:38:50", course: "ENTR-3306", source: "ENTR-3306_2026-10-01_1405.m4a",
+    name, url: "https://docs.google.com/document/d/x/edit", error: null, warning: "",
+    date: "2026-10-01", seconds: 1895, words: 2835, actions: 0, terms: 7,
+  };
+  const posted = [];
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": like("/api/status", { courses: ["ENTR-3306", "ECON-2301"], recent: [row] }),
+      "/api/lecture/refile": (body) => {
+        posted.push(body);
+        return { ok: true, course: body.course, name: name.replace("ENTR-3306", body.course),
+                 from: "ENTR-3306", url: row.url, warnings: [] };
+      },
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  const move = page.$("recent").querySelector(".row-move");
+  assert(move, "the lecture has no Move action");
+  equal([...move.options].map((o) => o.value), ["", "ECON-2301"],
+    "Move offers the course the lecture is already under, or misses one");
+  move.value = "ECON-2301";
+  move.dispatchEvent(new page.window.Event("change"));
+  await page.settle();
+  equal(posted, [{ name, course: "ECON-2301" }], "Move did not ask to refile the lecture");
+  assert(/Moved to ECON-2301/.test(page.$("flash").textContent), page.$("flash").textContent);
+  await page.close();
+});
+
 // --- R1: course text reaches markup, and must not carry anything with it ---
 
 await run("a course cannot smuggle an attribute into the picker", async () => {
