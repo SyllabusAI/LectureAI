@@ -367,7 +367,7 @@ Liam can do it, and each one has a clock that is not ours.
 | Oct 2 | `syllabus@maincoursemedia.com` group and a maincoursemedia.com address for Liam | Trace | Asked 2026-09-29. Google Workspace admin task. Urgent: the live privacy and terms pages already name this address for requests, appeals, and legal notices |
 | Oct 3 | Cloud project support email and developer contact to `syllabus@` | Liam | Waits on the group |
 | Oct 6 | Lawyer's changes in and deployed as a follow-up PR | Liam | Waits on the lawyer |
-| Oct 6 | Add the six signing and Sparkle secrets, run `release.yml` by hand, check the DMG on a second Mac | Trace, Liam | Built and merged 2026-09-30 (LectureAI #105), off until the secrets exist. See `docs/signing.md`. The signed path has never run, so leave room for a fix |
+| Oct 6 | Add the six signing and Sparkle secrets, run `release.yml` by hand, check the DMG on a second Mac | Trace, Liam | Built and merged 2026-09-30 (LectureAI #105), off until the secrets exist. See `docs/signing.md`. The `release` environment and the `v*` tag ruleset are set up (2026-10-02); no secrets yet. Every release run, 0.6.0 included, now waits for Trace or Liam to approve it. Make and back up the Sparkle key any time, but set it in the same sitting as the five Apple secrets: the key without them fails the run on purpose. The signed path has never run, so leave room for a fix |
 | Oct 7 | Run `scripts/stripe-live.mjs` with the live price ids, set the secrets, merge the result to deploy | Claude | Kit merged 2026-09-30 (syllabus-accounts #58), see `docs/stripe-live.md`. Waits on Stripe |
 | Oct 8 | One full live-mode run: sign up, trial, pay, record, top up, refund, delete | Liam | Waits on the two above |
 | Oct 9 | Go or slip, decided on this table | Trace, Liam | |
@@ -378,6 +378,12 @@ Liam can do it, and each one has a clock that is not ours.
 - ~~Developer ID signing and notarization in `packaging/build.sh` and the
   release workflow.~~ Built 2026-09-30 (LectureAI #105), gated on secrets.
   Releases stay unsigned until they are added.
+- ~~The `release` environment and the `v*` tag ruleset.~~ Set up
+  2026-10-02: Trace and Liam are required reviewers (admins can bypass),
+  deployments from `main` and `v*` only, and only admins can create, move
+  or delete `v*` tags.
+- Add the six secrets to the `release` environment. Waits on Apple
+  enrollment.
 - ~~Tag v0.2.0 and run the release workflow end to end.~~ Done: v0.2.0
   through v0.5.1 were built by `release.yml`.
 - ~~Wire Sparkle self-update.~~ Built 2026-09-30 (LectureAI #105), loaded
