@@ -7,13 +7,34 @@ them a release builds exactly as it always has: signed ad hoc, a
 "Unsigned build" notice in the run's summary, and release notes that carry the
 Gatekeeper steps.
 
-Turning it on is: do the Apple steps once, add the secrets, run the workflow
-by hand to check, then tag.
+Turning it on is: create the `release` environment, do the Apple steps once,
+add the secrets to that environment, run the workflow by hand to check, then
+tag.
+
+## The release environment (do this first)
+
+The secrets sign the app and the update feed every installed Syllabus
+trusts, so they are environment secrets, never repository secrets. The
+`build` job in `release.yml` names the environment, and no other job can read
+them.
+
+In `SyllabusAI/LectureAI`, Settings, Environments, New environment, named
+exactly `release`:
+
+1. **Required reviewers:** Trace and Liam. Every release run then waits for
+   one of them to approve it, after the tests pass.
+2. **Deployment branches and tags:** "Selected branches and tags", with the
+   branch `main` (for the manual check below) and the tag pattern `v*`.
+3. Add the secrets below under this environment's "Environment secrets".
+
+Then Settings, Rules, Rulesets: a tag ruleset on `v*` that restricts
+creation, update and deletion to repository admins, so a `v*` tag cannot be
+pushed by anyone else.
 
 ## The secrets
 
-Repository secrets on `SyllabusAI/LectureAI` (Settings, Secrets and
-variables, Actions), all names exact:
+Environment secrets on the `release` environment of `SyllabusAI/LectureAI`
+(above), all names exact:
 
 | Secret | What it holds | Needed for |
 | --- | --- | --- |
@@ -60,8 +81,8 @@ first (the team shows in developer.apple.com/account with a Team ID).
 5. Encode it and set the two secrets (from any Mac with `gh` signed in):
 
    ```sh
-   base64 -i DeveloperID.p12 | gh secret set MACOS_CERT_P12 --repo SyllabusAI/LectureAI
-   gh secret set MACOS_CERT_PASSWORD --repo SyllabusAI/LectureAI   # paste the password
+   base64 -i DeveloperID.p12 | gh secret set MACOS_CERT_P12 --env release --repo SyllabusAI/LectureAI
+   gh secret set MACOS_CERT_PASSWORD --env release --repo SyllabusAI/LectureAI   # paste the password
    ```
 
 6. Keep the .p12 and its password in the password manager, then delete the
@@ -80,9 +101,9 @@ first (the team shows in developer.apple.com/account with a Team ID).
 4. Set the three secrets:
 
    ```sh
-   gh secret set ASC_API_KEY_ID    --repo SyllabusAI/LectureAI   # paste the Key ID
-   gh secret set ASC_API_ISSUER_ID --repo SyllabusAI/LectureAI   # paste the Issuer ID
-   gh secret set ASC_API_KEY_P8    --repo SyllabusAI/LectureAI < AuthKey_XXXXXXXXXX.p8
+   gh secret set ASC_API_KEY_ID    --env release --repo SyllabusAI/LectureAI   # paste the Key ID
+   gh secret set ASC_API_ISSUER_ID --env release --repo SyllabusAI/LectureAI   # paste the Issuer ID
+   gh secret set ASC_API_KEY_P8    --env release --repo SyllabusAI/LectureAI < AuthKey_XXXXXXXXXX.p8
    ```
 
 5. Keep the .p8 in the password manager and delete the loose file.
@@ -103,7 +124,7 @@ they would have to download one by hand. Back it up before anything else.
 4. Store that file's contents in the password manager, then:
 
    ```sh
-   gh secret set SPARKLE_ED_PRIVATE_KEY --repo SyllabusAI/LectureAI < sparkle_private_key.txt
+   gh secret set SPARKLE_ED_PRIVATE_KEY --env release --repo SyllabusAI/LectureAI < sparkle_private_key.txt
    rm sparkle_private_key.txt
    ```
 

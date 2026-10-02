@@ -87,6 +87,12 @@ jobs:
   build:
     needs: tests
     runs-on: macos-15  # Apple silicon
+    # The signing and Sparkle secrets live on the `release` environment, not
+    # the repository, so only this job can read them and only when the
+    # environment's rules allow: a required reviewer, and runs from `main` or
+    # a `v*` tag alone (docs/signing.md). A workflow edited on another branch,
+    # or a tag pushed on an unreviewed commit, gets no key to sign with.
+    environment: release
     steps:
       - uses: actions/checkout@v4
 
