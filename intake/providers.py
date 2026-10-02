@@ -322,6 +322,11 @@ PROXY_REASONS = {
     "rate_limited": "too many requests at once; this will retry",
     "provider_busy": "the transcription provider is busy; this will retry",
     "provider_unavailable": "the transcription provider could not be reached",
+    # The service's own monthly cap, shared by every account (GLOBAL_CEILING in
+    # syllabus-accounts). Nothing this account did, and nothing it can do.
+    "service_ceiling": "Syllabus has paused processing for everyone until its "
+                       "monthly limit is raised; the recording is kept in the "
+                       "inbox and runs once it is",
     "too_large": "the chunk is bigger than the service accepts",
     "too_long": "the chunk is longer than the service accepts",
     # Both mean the model answered and the answer was not usable, which is
