@@ -193,10 +193,13 @@ Developer ID" in `packaging/release-notes.md`).
   after that.
 - **Sparkle asks before installing** (`SUAutomaticallyUpdate` is off) and
   checks daily, like the GitHub check. When someone chooses Install and
-  Relaunch, the app quits and is replaced. A recording keeps running on its
-  own after the app quits, from the old copy's files, so an update in the
-  middle of a recording is a risk worth testing before launch; the safe
-  habit until then is to install updates between lectures.
+  Relaunch, the app quits and is replaced, **unless a recording is running**:
+  then `intake/sparkle.py` postpones the relaunch through Sparkle's delegate,
+  checks every 15 seconds, and lets it go once the recording has stopped. The
+  app log says `sparkle: update waits for the recording to stop` and then
+  `sparkle: recording stopped, installing the update`. Worth one hands-on
+  check on the first signed release: start a recording, choose Install and
+  Relaunch, and confirm the app stays up until you stop it.
 - **The download page's Gatekeeper walkthrough** (`/syllabus/download`,
   main-course-media) can be cut once a signed release is live; its header
   comment says what to keep.

@@ -142,6 +142,75 @@ def test_release_notes_line_the_signed_build_drops():
     assert "not yet signed with an Apple Developer ID" in workflow
 
 
+class FakeClock:
+    """schedule() and on_main() for RelaunchHold, run by hand."""
+
+    def __init__(self):
+        self.pending = []
+        self.main = []
+
+    def schedule(self, seconds, fn):
+        self.pending.append(fn)
+
+    def on_main(self, fn):
+        self.main.append(fn)
+
+    def tick(self):
+        due, self.pending = self.pending, []
+        for fn in due:
+            fn()
+
+
+def test_relaunch_goes_now_without_a_recording():
+    clock = FakeClock()
+    hold = sparkle.RelaunchHold(lambda: False, clock.schedule, clock.on_main)
+    assert hold.postpone(lambda: None) is False
+    assert not hold.waiting and not clock.pending
+
+
+def test_relaunch_waits_for_the_recording():
+    recording = [True]
+    calls = []
+    clock = FakeClock()
+    hold = sparkle.RelaunchHold(lambda: recording[0], clock.schedule, clock.on_main)
+    assert hold.postpone(lambda: calls.append("first")) is True
+    assert hold.waiting and len(clock.pending) == 1
+    clock.tick()
+    clock.tick()
+    assert not clock.main and len(clock.pending) == 1, "still recording: checks again"
+    # Asked again while waiting: the newest handler wins, and no second timer.
+    assert hold.postpone(lambda: calls.append("second")) is True
+    assert len(clock.pending) == 1
+    recording[0] = False
+    clock.tick()
+    assert not clock.pending and len(clock.main) == 1 and not hold.waiting
+    clock.main[0]()
+    assert calls == ["second"], calls
+
+
+def test_a_failed_check_does_not_block_updates():
+    def broken():
+        raise OSError("ps went away")
+    clock = FakeClock()
+    hold = sparkle.RelaunchHold(broken, clock.schedule, clock.on_main)
+    assert hold.postpone(lambda: None) is False
+
+
+def test_recording_in_progress_reads_the_state_file():
+    from intake import record
+    saved = record._read_state, record._process_is_recording
+    try:
+        record._read_state = lambda: None
+        assert sparkle.recording_in_progress() is False
+        record._read_state = lambda: {"pid": 1, "staging": Path("/x/rec.m4a")}
+        record._process_is_recording = lambda pid, staging: pid == 1 and staging.name == "rec.m4a"
+        assert sparkle.recording_in_progress() is True
+        record._process_is_recording = lambda pid, staging: False
+        assert sparkle.recording_in_progress() is False, "a dead ffmpeg is not a recording"
+    finally:
+        record._read_state, record._process_is_recording = saved
+
+
 if __name__ == "__main__":
     results = [
         run("Sparkle is configured only with the framework and both keys",
@@ -154,6 +223,14 @@ if __name__ == "__main__":
         run("the public key comes from the exported private key", test_public_key),
         run("the Gatekeeper paragraph the signed notes drop is still there",
             test_release_notes_line_the_signed_build_drops),
+        run("with no recording the update relaunches at once",
+            test_relaunch_goes_now_without_a_recording),
+        run("during a recording the relaunch waits until it stops",
+            test_relaunch_waits_for_the_recording),
+        run("a recording check that fails lets the update go",
+            test_a_failed_check_does_not_block_updates),
+        run("a recording is a live ffmpeg named in the state file",
+            test_recording_in_progress_reads_the_state_file),
     ]
     print(f"\n{sum(results)}/{len(results)} passed")
     sys.exit(0 if all(results) else 1)

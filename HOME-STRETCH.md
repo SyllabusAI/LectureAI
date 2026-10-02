@@ -383,7 +383,9 @@ Liam can do it, and each one has a clock that is not ours.
 - ~~Wire Sparkle self-update.~~ Built 2026-09-30 (LectureAI #105), loaded
   through PyObjC. Installed copies before the first signed release have no
   Sparkle and reach it through the existing download notice.
-- Test installing an update while a recording is running.
+- ~~Test installing an update while a recording is running.~~ Handled by
+  design 2026-10-02: Install and Relaunch waits until the recording stops
+  (`intake/sparkle.py`). One hands-on check on the first signed release.
 
 **P1. Legal and consent** (8 h)
 - Syllabus privacy policy and terms, hosted on the account service, naming
