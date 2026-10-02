@@ -13,6 +13,7 @@
     intake notion --check   what the Notion integration sees
     intake notion --setup   add the Notion properties it needs
     intake calendar --check which calendars get deadlines, and their access
+    intake refile NAME --course CODE  move a filed lecture to another course
     intake --profile sous   any of the above, against the sous profile
 
 Every subcommand hands its remaining arguments to the module it wraps, so
@@ -37,11 +38,11 @@ from intake import __version__, profiles
 USAGE = __doc__.split("\n\n")[1]
 
 COMMANDS = ("setup", "doctor", "record", "watch", "panel", "app", "service", "login",
-            "notion", "calendar")
+            "notion", "calendar", "refile")
 
 # Subcommands that cannot do anything useful without a schedule, so they fail
 # up front with one readable line rather than a traceback from deep inside.
-NEEDS_SCHEDULE = {"record", "watch", "panel"}
+NEEDS_SCHEDULE = {"record", "watch", "panel", "refile"}
 
 
 def log(msg: str) -> None:
@@ -175,6 +176,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "calendar":
         from intake import calendars
         return calendars.main(rest)
+    if command == "refile":
+        from intake import refile
+        return refile.main(rest)
     return 2  # unreachable
 
 
