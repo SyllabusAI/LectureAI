@@ -327,6 +327,12 @@ PROXY_REASONS = {
     "service_ceiling": "Syllabus has paused processing for everyone until its "
                        "monthly limit is raised; the recording is kept in the "
                        "inbox and runs once it is",
+    # The two refusals a `quality=high` second pass can get from the service
+    # (syllabus-accounts F-21). Either way the first transcript stands.
+    "quality_unavailable": "the clearer second pass is not switched on yet; "
+                           "the first transcript is kept",
+    "first_pass_required": "the clearer second pass needs this part's first pass "
+                           "from the last day; the first transcript is kept",
     "too_large": "the chunk is bigger than the service accepts",
     "too_long": "the chunk is longer than the service accepts",
     # Both mean the model answered and the answer was not usable, which is

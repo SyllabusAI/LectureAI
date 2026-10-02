@@ -805,6 +805,10 @@ def t20():
     # recording is not lost, instead of the bare error code.
     paused = providers.refusal_reason({"error": "service_ceiling", "kind": "transcribe", "period": "2026-10"})
     assert "paused processing for everyone" in paused and "kept in the inbox" in paused, paused
+    # A refused second pass says why, and that nothing was lost.
+    for code in ("quality_unavailable", "first_pass_required"):
+        said = providers.refusal_reason({"error": code})
+        assert "second pass" in said and "first transcript is kept" in said, (code, said)
 results.append(run("a refusal names the meter that ran out, in that meter's units", t20))
 
 
