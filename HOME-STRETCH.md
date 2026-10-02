@@ -353,8 +353,10 @@ at Starter, 4 at Standard, all of them at Pro.
 
 ### To October 12
 
-Status as of 2026-09-29, 13 days out. **Outside the code** means only Trace or
-Liam can do it, and each one has a clock that is not ours.
+Status as of 2026-09-29, 13 days out, with the code-side states updated
+2026-10-02. **Outside the code** means only Trace or Liam can do it, and each
+one has a clock that is not ours; those states are as last written unless a
+row says otherwise.
 
 | When | Item | Who | State |
 |---|---|---|---|
@@ -368,10 +370,10 @@ Liam can do it, and each one has a clock that is not ours.
 | Oct 3 | Cloud project support email and developer contact to `syllabus@` | Liam | Waits on the group |
 | Oct 6 | Lawyer's changes in and deployed as a follow-up PR | Liam | Waits on the lawyer |
 | Oct 6 | Add the six signing and Sparkle secrets, run `release.yml` by hand, check the DMG on a second Mac | Trace, Liam | Built and merged 2026-09-30 (LectureAI #105), off until the secrets exist. See `docs/signing.md`. The `release` environment and the `v*` tag ruleset are set up (2026-10-02); no secrets yet. Every release run, 0.6.0 included, now waits for Trace or Liam to approve it. Make and back up the Sparkle key any time, but set it in the same sitting as the five Apple secrets: the key without them fails the run on purpose. The signed path has never run, so leave room for a fix |
-| Oct 7 | Run `scripts/stripe-live.mjs` with the live price ids, set the secrets, merge the result to deploy | Claude | Kit merged 2026-09-30 (syllabus-accounts #58), see `docs/stripe-live.md`. Waits on Stripe |
-| Oct 8 | One full live-mode run: sign up, trial, pay, record, top up, refund, delete | Liam | Waits on the two above |
+| Oct 7 | Run `scripts/stripe-live.mjs` with the live price ids, set the secrets, merge the result to deploy | Claude | Kit merged 2026-09-30 (syllabus-accounts #58), see `docs/stripe-live.md`. Since 2026-10-02 the webhook also handles `checkout.session.async_payment_succeeded` (syllabus-accounts #60), and the script lists it from the code; the restricted deletion key is documented with Invoices: Read. Waits on Stripe |
+| Oct 8 | One full live-mode run: sign up, trial, pay, record, top up, refund, delete | Liam | Scripted 2026-10-02 as syllabus-accounts `docs/live-run.md` (#70): fifteen steps with what each should show, about $15 of real charges, the trial ended from the Stripe dashboard, and a log capture checked by `scripts/scan-logs.mjs`. Waits on the two above |
 | Oct 9 | Go or slip, decided on this table | Trace, Liam | |
-| Oct 12 | Merge main-course-media #189, deploy Pages by hand, announce | Claude, Liam | Draft PR ready 2026-09-30. Merging does not deploy |
+| Oct 12 | Merge main-course-media #189, deploy Pages by hand, announce | Claude, Liam | Draft PR ready 2026-09-30. Merging does not deploy. Since 2026-10-01 it also makes `/syllabus/guide/` public. Pre-flight 2026-10-02: prices, hours and privacy claims match what the account service enforces and stores, and it merges cleanly with main. Announcement, friends and family email and support replies are drafted (the launch copy doc) |
 
 **P0. Apple and the app** (6 h, plus Apple's own clock)
 - Complete organization enrollment.
@@ -519,6 +521,24 @@ the proposed bar; it is a checklist you sign off, not a feeling.
 6. A documented `DRIVE_KEY` rotation procedure.
 7. Zero unresolved high or critical findings. Mediums triaged in writing.
 
+**Status 2026-10-02** (syllabus-accounts `docs/threat-model-0.6.md` and
+`docs/asvs-l1-checklist.md`, both re-checked against that day's code):
+
+- **Open and blocking: F-02 (High).** `PANEL_ORIGIN` is still empty. The code
+  is done; it waits on a second registrable domain, or a written acceptance.
+- **Found and fixed:** F-21 (High). The `quality=high` pass billed on the
+  caller's header; it is billed on the first pass's measured length since
+  syllabus-accounts #66, and stays off until #104 ships. F-22 (Medium): the
+  signing keys belong to the `release` environment (LectureAI #113, settings
+  done 2026-10-02).
+- **Still open in settings: F-07.** Secret scanning, push protection and
+  Dependabot alerts on both repos, and the `production` environment rules on
+  syllabus-accounts.
+- Every Low is triaged in writing (syllabus-accounts #63). Fixed since:
+  F-11, F-16, F-17, F-19, F-20, and F-04 in part. F-10 (one trial per card)
+  and the F-12 trial key are built; the first waits on a privacy line, the
+  second on setting `TRIAL_SECRET` once.
+
 Already good and worth not regressing: device tokens stored as SHA-256 only,
 the Drive refresh token AES-GCM encrypted and never sent to a panel, one-time
 codes with expiry and single redemption, the relay pinned to the owning
@@ -571,10 +591,10 @@ account with a path allowlist and size caps.
     measured in the meantime.
   - **Turbo** is a separate call, above. Data policy was good and is unchanged:
     no training on inputs, no retention by default, self-serve ZDR.
-- **The trial allowance on Trace's own account is nearly spent.** 109k of 150k
-  summary tokens went on benchmarking and live verification 2026-09-15, leaving
-  roughly two full-lecture summaries before the proxy returns 402. It is a row
-  in the D1 `allowances` table.
+- ~~**The trial allowance on Trace's own account is nearly spent.**~~ Resolved:
+  checked 2026-10-02, both accounts in use are on the `owner` allowance (40
+  hours and 1.5M summary tokens a month) with 2.9 and 3.6 hours used this
+  month. The Oct 8 run uses fresh accounts on the ordinary trial.
 - ~~**Provider benchmark results.**~~ Done 2026-09-15, slice 1 (PR #50).
   `gpt-4o-mini-transcribe` measured **$0.18 per audio hour**. **Superseded
   2026-09-19**: transcription moved to Groq `whisper-large-v3` at $0.111/hr,
