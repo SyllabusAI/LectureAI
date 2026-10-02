@@ -801,6 +801,10 @@ def t20():
     # A body with no numbers still has to say which one, not guess at both.
     bare = providers.refusal_reason({"error": "allowance_exhausted", "kind": "summarize"})
     assert bare == "this account has used its summary allowance for the month", bare
+    # The service-wide cap is nobody's allowance: it says so, and that the
+    # recording is not lost, instead of the bare error code.
+    paused = providers.refusal_reason({"error": "service_ceiling", "kind": "transcribe", "period": "2026-10"})
+    assert "paused processing for everyone" in paused and "kept in the inbox" in paused, paused
 results.append(run("a refusal names the meter that ran out, in that meter's units", t20))
 
 
