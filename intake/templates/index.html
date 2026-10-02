@@ -494,6 +494,7 @@
   a.row-title { display: block; color: var(--ink); text-decoration: none; }
   a.row-title:hover { color: var(--brand-deep); }
   .rec-row .measures { font-size: 11px; color: var(--muted); font-weight: 300; margin-top: 2px; }
+  .rec-row .row-move { flex: 0 0 auto; width: auto; font-size: 11px; padding: 3px 6px; color: var(--muted); }
 
   /* Study assistant, v3 ------------------------------------------------ */
   .assistant { margin-bottom: 16px; }
@@ -1476,12 +1477,38 @@ function renderRecent(s) {
     const tag = x.warning
       ? `<span class="tag warn">${escapeHtml(x.course)}</span>`
       : `<span class="tag course" style="${courseStyle(x.course)}"><span class="sw"></span>${escapeHtml(x.course)}</span>`;
+    // Filed under the wrong course and the audio already gone: this is the
+    // only way to put it right without renaming two files in Drive by hand.
+    const others = (s.courses || []).filter(c => c !== x.course);
+    const move = others.length && x.url
+      ? `<select class="row-move" data-name="${escapeHtml(x.name)}" aria-label="Move this lecture to another course">
+        <option value="">Move</option>${others.map(c => `<option value="${escapeHtml(c)}">to ${escapeHtml(c)}</option>`).join("")}</select>`
+      : "";
     return `<div class="rec-row" style="${courseStyle(x.course)}"><span class="sw-l"></span><div class="row-main">
       <a class="row-title" href="${escapeHtml(x.url)}" target="_blank" rel="noopener" title="${escapeHtml(x.name)}">${escapeHtml(topic || x.name)}</a>
       <div class="row-sub">${longDate(x.date)} · from ${escapeHtml(x.source)}</div>
       ${measures.length ? `<div class="measures">${measures.join(" · ")}</div>` : ""}${warn}
-    </div>${tag}</div>`;
+    </div>${tag}${move}</div>`;
   }).join("");
+  for (const sel of box.querySelectorAll(".row-move")) {
+    sel.onchange = () => moveLecture(sel);
+  }
+}
+
+async function moveLecture(sel) {
+  const course = sel.value;
+  if (!course) return;
+  sel.disabled = true;
+  try {
+    const out = await api("/api/lecture/refile", { name: sel.dataset.name, course });
+    const notes = (out.warnings || []).length ? ` Note: ${out.warnings.join("; ")}.` : "";
+    flash(`Moved to ${out.course} as ${out.name}. Its links still work.${notes}`);
+  } catch (e) {
+    flash(e.message, true);
+    sel.value = "";
+    sel.disabled = false;
+  }
+  poll();
 }
 
 // Course rail -------------------------------------------------------------------

@@ -731,6 +731,28 @@ def class_restore():
     return jsonify({"ok": True, "course": course, "date": day})
 
 
+@app.post("/api/lecture/refile")
+def lecture_refile():
+    """Move a filed lecture to another course: its Drive files, and the log.
+
+    For a lecture filed under the wrong course after its audio is gone. The
+    links stay the same, because the files are moved rather than copied.
+    """
+    payload = _body()
+    name = _text(payload, "name")
+    course = _text(payload, "course")
+    if not name or not course:
+        raise _BadRequest("say which lecture and which course")
+    from intake import refile
+    try:
+        out = refile.refile(name, course)
+    except refile.RefileError as exc:
+        raise _BadRequest(str(exc)) from None
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"could not move it: {exc}"}), 502
+    return jsonify({"ok": True, **out})
+
+
 @app.get("/api/setup")
 def setup_state():
     """Everything the Setup page shows. Keys are masked; they never leave here."""
