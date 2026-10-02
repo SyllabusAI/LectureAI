@@ -134,6 +134,69 @@ await run("a course the user had picked is kept only while it exists", async () 
   await page.close();
 });
 
+// --- A pick is for one recording, not for every one after it --------------
+// 2026-10-01: ENTR-3306 picked by hand for the 12:45 lecture was still
+// selected when Record was pressed at 14:05, so the ECON-2301 class after it
+// was filed under ENTR-3306 while the headline read "ECON-2301 is on now".
+
+await run("a course picked for one recording does not carry into the next class", async () => {
+  const courses = ["ENTR-3306", "ECON-2301"];
+  const idle = like("/api/status").recording;
+  let status = like("/api/status", { courses, now_class: "ENTR-3306" });
+  const posted = [];
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": () => status,
+      "/api/record/start": (body) => { posted.push(body); return { ok: true, device: "d", planned: "p" }; },
+      "/api/record/stop": () => ({ ok: true, name: "n", seconds: 60, bytes: 1, watching: true, lost: 0 }),
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  const picker = page.$("courseSel");
+  picker.value = "ENTR-3306";
+  page.$("recBtn").click();
+  await page.settle();
+  equal(posted[0].course, "ENTR-3306", "the pick did not reach the recorder");
+
+  status = like("/api/status", {
+    courses, now_class: "ENTR-3306",
+    recording: { ...idle, active: true, course: "ENTR-3306", planned: "p" },
+  });
+  await page.window.poll();
+  await page.settle();
+  page.$("recBtn").click();
+  await page.settle();
+
+  // The next class starts and the panel has been open the whole time.
+  status = like("/api/status", { courses, now_class: "ECON-2301" });
+  await page.window.poll();
+  await page.settle();
+  equal(picker.value, "", "the last recording's course is still picked");
+  page.$("recBtn").click();
+  await page.settle();
+  equal(posted[1].course, "", "the next class was filed under the last one's course");
+  await page.close();
+});
+
+await run("the headline names the picked course when it is not the scheduled one", async () => {
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": like("/api/status", { courses: ["ENTR-3306", "ECON-2301"], now_class: "ECON-2301" }),
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  assert(/files under this course/.test(page.$("recMeta").textContent), page.$("recMeta").textContent);
+  const picker = page.$("courseSel");
+  picker.value = "ENTR-3306";
+  picker.dispatchEvent(new page.window.Event("change"));
+  const meta = page.$("recMeta").textContent;
+  assert(/ENTR-3306/.test(meta) && !/files under this course/.test(meta),
+    `the page still promises the scheduled course: ${meta}`);
+  await page.close();
+});
+
 // --- A lecture filed under the wrong course can be moved -------------------
 
 await run("a recent lecture can be moved to another course", async () => {
