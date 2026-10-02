@@ -13,7 +13,6 @@
 - The watcher turns itself off once your lectures are processed. Start it before class and it waits for the lecture, files the notes, then stops on its own instead of running in the background until you remember it.
 - A course you pick by hand now covers just that recording. Afterward the picker goes back to your schedule, so the next class is filed under its own course. While your pick differs from the scheduled class, the dashboard says which course the lecture will be filed under.
 - A lecture filed under the wrong course can be moved. Choose Move on it in Recent lectures, or run `syllabus refile`. Its summary and transcript move to the right course folder in Drive, keep their links, and the dashboard follows.
-- Lectures that are hard to make out come out clearer. When a part of a recording is hard to follow, Syllabus transcribes that part again on a more accurate model and keeps the better result. Students talking near the recorder do not set it off. A part transcribed again counts as three times its length against your monthly hours.
 
 Download `{{dmg}}`, open it, and drag Syllabus to Applications. Open Syllabus from Applications and it starts on its Setup page: sign in to your Syllabus account, pick a microphone, enter your class schedule, and connect Google Drive. A signed-in Mac holds no API key of its own, because transcription and summaries are billed to the account. Without an account, paste two keys of your own instead, one from OpenAI and one from Anthropic. Nothing else to install.
 
