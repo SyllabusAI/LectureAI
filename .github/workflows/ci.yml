@@ -33,9 +33,8 @@ jobs:
         # here to make the declared floor true rather than aspirational.
         python: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python }}
 
@@ -45,7 +44,7 @@ jobs:
       # is why SYLLABUS_REQUIRE_JS_TESTS below turns that skip into a failure.
       # `npm ci` installs the exact lockfile, jsdom and nothing else, into
       # tests/panel/ only. Nothing here reaches the wheel or the .app.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -113,8 +112,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           # Pinned: the checker reads Python through `tokenize`, and 3.12 split
           # f-strings into FSTRING_* tokens. One version, one behavior.
