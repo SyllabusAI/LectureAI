@@ -535,9 +535,9 @@ the proposed bar; it is a checklist you sign off, not a feeling.
 - **F-07, settings done 2026-10-03.** Secret scanning, push protection and
   Dependabot alerts are on for both repos. `production` on syllabus-accounts
   deploys from `main` only and needs Trace or Liam to approve each deploy, so
-  every merge there now waits for an approval before it goes live. Still a
-  decision: require one review on `main`, or accept in writing that the two
-  owners merge their own PRs.
+  every merge there now waits for an approval before it goes live. No required
+  review on `main`: accepted 2026-10-03, the two owners merge their own PRs
+  and the deploy approval is the second look. F-07 is closed.
 - Every Low is triaged in writing (syllabus-accounts #63). Fixed since:
   F-11, F-16, F-17, F-19, F-20, and F-04 in part. F-10 (one trial per card)
   and the F-12 trial key are built; the first waits on a privacy line, the
