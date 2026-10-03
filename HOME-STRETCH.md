@@ -367,7 +367,7 @@ row says otherwise.
 | Oct 1 | Insurance broker call | Trace | Open |
 | Oct 1 | Privacy and terms to the lawyer | Liam | Live since 2026-09-29 (syllabus-accounts #45, merged before review). The lawyer is not booked yet |
 | Oct 2 | `syllabus@maincoursemedia.com` group and a maincoursemedia.com address for Liam | Trace | Asked 2026-09-29. Google Workspace admin task. Urgent: the live privacy and terms pages already name this address for requests, appeals, and legal notices |
-| Oct 3 | Cloud project support email and developer contact to `syllabus@` | Liam | Waits on the group |
+| Oct 3 | Cloud project support email and developer contact to `syllabus@` | Liam | Developer contact moved to `syllabus@` 2026-10-03. The support email is still `hugahound23@gmail.com`: its picker offers only the signed-in account and Google Groups it manages, and Liam's account manages none. Trace adds Liam as a manager of the `syllabus@` group (or makes the change from an account that manages it) |
 | Oct 6 | Lawyer's changes in and deployed as a follow-up PR | Liam | Waits on the lawyer |
 | Oct 6 | Add the six signing and Sparkle secrets, run `release.yml` by hand, check the DMG on a second Mac | Trace, Liam | Built and merged 2026-09-30 (LectureAI #105), off until the secrets exist. See `docs/signing.md`. The `release` environment and the `v*` tag ruleset are set up (2026-10-02); no secrets yet. Every release run, 0.6.0 included, now waits for Trace or Liam to approve it. Make and back up the Sparkle key any time, but set it in the same sitting as the five Apple secrets: the key without them fails the run on purpose. The signed path has never run, so leave room for a fix |
 | Oct 7 | Run `scripts/stripe-live.mjs` with the live price ids, set the secrets, merge the result to deploy | Claude | Kit merged 2026-09-30 (syllabus-accounts #58), see `docs/stripe-live.md`. Since 2026-10-02 the webhook also handles `checkout.session.async_payment_succeeded` (syllabus-accounts #60), and the script lists it from the code; the restricted deletion key is documented with Invoices: Read. Waits on Stripe |
@@ -407,9 +407,10 @@ row says otherwise.
   "verified". The address does not change when #45 goes live, so no
   re-verification is expected from the new text.
 - Move the Google Cloud project's user support email and developer contact
-  from `hugahound23@gmail.com` to `syllabus@maincoursemedia.com`, once Trace
-  creates that group (asked 2026-09-29). Do it early: a change to a verified
-  app's branding can prompt a re-review.
+  from `hugahound23@gmail.com` to `syllabus@maincoursemedia.com`. Developer
+  contact done 2026-10-03. The support email waits on a manager of the group:
+  the console lists only Google Groups the signed-in account manages. A change
+  to a verified app's branding can prompt a re-review.
 - ~~Blocking consent acknowledgment at setup: "I have permission to record."~~
   Shipped in 0.5.0 (#84), then **removed for 0.6.0** by decision 2026-09-29.
   The terms carry it instead: Syllabus does not obtain consent from anyone
@@ -531,9 +532,12 @@ the proposed bar; it is a checklist you sign off, not a feeling.
   syllabus-accounts #66, and stays off until #104 ships. F-22 (Medium): the
   signing keys belong to the `release` environment (LectureAI #113, settings
   done 2026-10-02).
-- **Still open in settings: F-07.** Secret scanning, push protection and
-  Dependabot alerts on both repos, and the `production` environment rules on
-  syllabus-accounts.
+- **F-07, settings done 2026-10-03.** Secret scanning, push protection and
+  Dependabot alerts are on for both repos. `production` on syllabus-accounts
+  deploys from `main` only and needs Trace or Liam to approve each deploy, so
+  every merge there now waits for an approval before it goes live. Still a
+  decision: require one review on `main`, or accept in writing that the two
+  owners merge their own PRs.
 - Every Low is triaged in writing (syllabus-accounts #63). Fixed since:
   F-11, F-16, F-17, F-19, F-20, and F-04 in part. F-10 (one trial per card)
   and the F-12 trial key are built; the first waits on a privacy line, the
