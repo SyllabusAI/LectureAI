@@ -273,7 +273,9 @@ def _setup_needs() -> list[str]:
     """
     needs = []
     if not account.managed() and not (config.OPENAI_API_KEY and config.ANTHROPIC_API_KEY):
-        needs.append("API keys")
+        own = _byo_keys({"OPENAI_API_KEY": config.OPENAI_API_KEY,
+                         "ANTHROPIC_API_KEY": config.ANTHROPIC_API_KEY})
+        needs.append("API keys" if own else "a Syllabus sign-in")
     try:
         if not config.courses():
             needs.append("a class schedule")
@@ -282,6 +284,22 @@ def _setup_needs() -> list[str]:
         # apart: the file is there and unreadable, and saving rewrites it.
         needs.append("a readable class schedule")
     return needs
+
+
+def _byo_keys(values: dict[str, str]) -> bool:
+    """Whether the Setup page offers this Mac's own API keys.
+
+    Managed keys are the product, so a Mac that can reach the account service
+    signs in and never sees the key fields. They stay for a Mac with no
+    account service (Sous), one that already has keys saved, and a developer
+    who sets INTAKE_BYO_KEYS=1.
+    """
+    if not account.enabled():
+        return True
+    if values.get("OPENAI_API_KEY") or values.get("ANTHROPIC_API_KEY"):
+        return True
+    flag = os.environ.get("INTAKE_BYO_KEYS", "").strip().lower()
+    return bool(flag) and flag not in account.OFF_WORDS
 
 
 def _configured() -> bool:
@@ -774,6 +792,7 @@ def setup_state():
         "openai_set": bool(values.get("OPENAI_API_KEY")),
         "anthropic": setup_wizard.mask(values.get("ANTHROPIC_API_KEY", "")),
         "anthropic_set": bool(values.get("ANTHROPIC_API_KEY")),
+        "byo_keys": _byo_keys(values),
         "device": values.get("RECORD_DEVICE", "") or config.RECORD_DEVICE,
         "devices": devices,
         "schedule": rows,
@@ -846,6 +865,9 @@ def setup_save():
     # never becomes configured and the panel reopens this page forever.
     if not account.managed() and (not values.get("OPENAI_API_KEY")
                                   or not values.get("ANTHROPIC_API_KEY")):
+        if not _byo_keys(values):
+            return jsonify({"ok": False, "error": "sign in to your Syllabus "
+                            "account first (step 1)"}), 400
         return jsonify({"ok": False, "error": "both API keys are needed"}), 400
 
     # A microphone is chosen from a list this Mac produced, so a value that is

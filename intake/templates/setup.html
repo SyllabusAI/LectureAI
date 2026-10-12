@@ -179,11 +179,40 @@
   </div>
   <div class="flash" id="flash"></div>
 
+  <!-- Syllabus account -->
+  <div class="card" id="accountCard" hidden>
+    <h2><span class="step">1</span> Sign in</h2>
+    <p class="lead">
+      Sign in with Google to start your plan. Transcription and summaries run on your
+      Syllabus account, so there are no keys or other services to set up, and your class
+      schedule follows you to any Mac you sign in on.
+    </p>
+    <div class="row">
+      <div class="status-line"><span class="dot off" id="accountDot"></span><span id="accountText">Not signed in</span></div>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn" id="accountBtn">Sign in to a Syllabus account</button>
+        <button type="button" class="btn danger" id="accountOff" hidden>Sign out</button>
+        <button type="button" class="btn" id="accountCancel" hidden>Cancel</button>
+      </div>
+    </div>
+    <div id="accountCode" hidden style="margin-top:12px">
+      <p class="lead" style="margin-bottom:6px">Enter this code at <a id="accountLink" href="#" target="_blank" rel="noopener">the account page</a>, signed in with Google:</p>
+      <div style="font: 600 30px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em" id="accountUserCode"></div>
+      <div class="hint" id="accountExpires"></div>
+    </div>
+    <div class="hint" id="accountHint"></div>
+    <div class="status-line" id="accountRelay" hidden style="margin-top:12px">
+      <span class="dot off" id="relayDot"></span><span id="relayText"></span>
+    </div>
+  </div>
+
   <form id="form" autocomplete="off">
 
-    <!-- 1. Keys -->
-    <div class="card">
-      <h2><span class="step">1</span> API keys</h2>
+    <!-- Own keys: only for a Mac with no account service, one that already
+         has keys saved, or a developer (INTAKE_BYO_KEYS=1). Everyone else
+         signs in above and never sees these fields. -->
+    <div class="card" id="keysCard" hidden>
+      <h2>API keys <span style="font-weight:400;letter-spacing:0;text-transform:none">(developer)</span></h2>
       <p class="lead" id="managedKeys" hidden>
         Nothing to do here. Transcription and summaries are billed to your
         Syllabus account, <strong id="managedEmail"></strong>, so this Mac
@@ -304,35 +333,9 @@
     <div id="calendars"><div class="hint">Checking&hellip;</div></div>
   </div>
 
-  <!-- Syllabus account -->
-  <div class="card" id="accountCard" hidden>
-    <h2><span class="step">6</span> Syllabus account <span style="font-weight:400;letter-spacing:0;text-transform:none">(optional)</span></h2>
-    <p class="lead">
-      Signing in ties this Mac to your Google identity, so later your class schedule and
-      Drive connection can follow you to another Mac. Everything here works without it.
-    </p>
-    <div class="row">
-      <div class="status-line"><span class="dot off" id="accountDot"></span><span id="accountText">Not signed in</span></div>
-      <div style="display:flex;gap:8px">
-        <button type="button" class="btn" id="accountBtn">Sign in to a Syllabus account</button>
-        <button type="button" class="btn danger" id="accountOff" hidden>Sign out</button>
-        <button type="button" class="btn" id="accountCancel" hidden>Cancel</button>
-      </div>
-    </div>
-    <div id="accountCode" hidden style="margin-top:12px">
-      <p class="lead" style="margin-bottom:6px">Enter this code at <a id="accountLink" href="#" target="_blank" rel="noopener">the account page</a>, signed in with Google:</p>
-      <div style="font: 600 30px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em" id="accountUserCode"></div>
-      <div class="hint" id="accountExpires"></div>
-    </div>
-    <div class="hint" id="accountHint"></div>
-    <div class="status-line" id="accountRelay" hidden style="margin-top:12px">
-      <span class="dot off" id="relayDot"></span><span id="relayText"></span>
-    </div>
-  </div>
-
   <!-- Start at login -->
   <div class="card" id="loginCard">
-    <h2><span class="step">7</span> Keep it running</h2>
+    <h2><span class="step">6</span> Keep it running</h2>
     <p class="lead">
       Recording, transcribing, and your address on the web all need Syllabus to be
       running. Starting it when you log in means it is there for every class without
@@ -472,6 +475,7 @@ function render(s) {
   $("homePath").textContent = s.home;
   DAYS = s.days;
 
+  $("keysCard").hidden = !!s.managed || !s.byo_keys;
   $("managedKeys").hidden = !s.managed;
   $("ownKeys").hidden = !!s.managed;
   $("managedEmail").textContent = s.managed_email || "your Syllabus account";
