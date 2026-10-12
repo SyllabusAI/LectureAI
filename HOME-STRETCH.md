@@ -41,7 +41,8 @@ now be testing a version of Syllabus nobody will buy. The two stages are one:
 the paid product, open to the public, on **Monday October 12**.
 
 - **What launches:** managed keys, metering, the three tiers, the 5-hour trial
-  with a card up front, top-ups, and the study assistant on Pro. BYO keys stay
+  with a card up front, upgrades from the account page, and the study
+  assistant on Pro. No top-ups (dropped 2026-10-12, see Tiers). BYO keys stay
   in the app for development and are not sold or offered.
 - **What the founding cohort becomes:** friends and family on the 100%-off
   promotion code, on the same product as everyone else. They are the first
@@ -56,6 +57,14 @@ activation, and the lawyer each run on someone else's clock. If one of them
 is not done by October 9, the launch slips as a whole; it does not split back
 into stages. The old plan's own point stands as the consolation: a study tool
 sells hardest in the ramp to finals, so a slip of a week or two costs little.
+
+**2026-10-12: not launched yet, and Stripe is the last blocker.** Trace and
+Liam's call that day: everything else is done or not blocking, and the launch
+goes as soon as Stripe live mode is finished. The unsigned build ships with
+the one-line installer (LectureAI #123), F-02 is fixed, Groq has a card and
+Anthropic auto-reloads. The insurance call and the lawyer's review are still
+open but are not holding the launch. What Stripe still needs is in the
+critical path table below.
 
 ---
 
@@ -146,7 +155,8 @@ Above it the effective rate climbs toward $0.18 and the whole exercise
 delivers nothing. Today, at one user, it is free and fine. At 25 users it is
 mostly fallback.
 
-**Action: add a card to the Groq account to reach the Developer plan.** Every
+**Action: add a card to the Groq account to reach the Developer plan.**
+(DONE 2026-10-12, card on file; see the critical path.) Every
 Groq row in this document assumes Developer-plan rates and limits; until that
 is done they describe a service Syllabus is not on. `npm run split` reports
 the effective rate per month and is how this gets noticed rather than
@@ -344,8 +354,13 @@ at Starter, 4 at Standard, all of them at Pro.
 - The friends-and-family code is a promotion code at `percent_off: 100`,
   `duration: forever`, with Checkout set to `payment_method_collection:
   'if_required'` so it does not ask for a card.
-- Cap behavior is a hard stop with a one-click top-up. No surprise bills for
-  students, ever.
+- Cap behavior is a hard stop. No surprise bills for students, ever. There
+  are **no top-ups**: Trace dropped them 2026-10-12 and syllabus-accounts #78
+  removed the code. Somebody who runs out can upgrade from the account page
+  (#80), which charges the full difference between the two monthly prices
+  right away. The Billing Portal's plan switching stays OFF: the plans are
+  separate Stripe products, so a portal downgrade would credit the difference
+  back after the bigger plan's hours were used.
 
 ---
 
@@ -354,24 +369,26 @@ at Starter, 4 at Standard, all of them at Pro.
 ### To October 12
 
 Status as of 2026-09-29, 13 days out, with the code-side states updated
-2026-10-02 and launch-day states updated 2026-10-12. **Outside the code** means only Trace or Liam can do it, and each
+2026-10-02 and launch-day states updated 2026-10-12. As of the evening of
+2026-10-12, Stripe is the only row still holding the launch (see "One launch,
+October 12"). **Outside the code** means only Trace or Liam can do it, and each
 one has a clock that is not ours; those states are as last written unless a
 row says otherwise.
 
 | When | Item | Who | State |
 |---|---|---|---|
 | Sep 30 | Apple Developer enrollment, $99 | Trace | Open. Declined 2026-09-17; signing and Sparkle wait on it. Not blocking since 2026-10-12: `install.sh` (#123) installs with no Gatekeeper warning, and `maincoursemedia.com/syllabus/install/` leads with it |
-| Sep 30 | Stripe live mode: activate (EIN, bank), live prices incl. the $5 top-up, live webhook, customer portal, 100%-off code, Stripe Tax with the Texas registration | Trace | Open. No sign of it as of 2026-10-12: `wrangler.jsonc` still has the sandbox prices and an empty top-up. **Blocks the paid launch** |
+| Sep 30 | Stripe live mode: activate (EIN, bank), the three live prices, live webhook, customer portal, 100%-off code, Stripe Tax with the Texas registration | Trace | **In progress, the last launch blocker.** Done 2026-10-12, checked in the dashboard: account activated; Starter, Standard and Pro created with the SaaS personal use tax code (`txcd_10103000`); Customer portal saved; terms and privacy links set. Still to do: turn OFF the portal's "Customers can switch plans"; the Texas registration (Tax > Locations is empty, and it needs the Comptroller permit number); the live webhook (URL and seven events in `docs/stripe-live.md`); the 100%-off coupon and a promotion code with a redemption cap and an expiry; payment methods trimmed to cards and wallets; the live secret key and the restricted deletion key. No top-up price: top-ups are gone |
 | Sep 30 | A card on Groq, to reach the Developer plan | Trace | Done 2026-10-12: card on file (Liam). The free plan's shared audio cap no longer pushes lectures onto the OpenAI fallback |
 | Sep 30 | Anthropic credit and auto-reload | Trace | Done 2026-10-12: auto-reload is on (Liam) |
-| Oct 1 | Insurance broker call | Trace | Open |
-| Oct 1 | Privacy and terms to the lawyer | Liam | Live since 2026-09-29 (syllabus-accounts #45, merged before review). The lawyer is not booked yet |
+| Oct 1 | Insurance broker call | Trace | Open. Not holding the launch (Trace and Liam, 2026-10-12) |
+| Oct 1 | Privacy and terms to the lawyer | Liam | Live since 2026-09-29 (syllabus-accounts #45, merged before review). The lawyer is not booked yet; not holding the launch (Trace and Liam, 2026-10-12). syllabus-accounts #82 (2026-10-12, waiting on Liam's review) takes "Extra hours" out of the terms and adds how upgrading is charged; it should go to the lawyer with the rest |
 | Oct 2 | `syllabus@maincoursemedia.com` group and a maincoursemedia.com address for Liam | Trace | Done 2026-10-02: both set up, test mail arrived. Asked 2026-09-29. Google Workspace admin task. Urgent: the live privacy and terms pages already name this address for requests, appeals, and legal notices |
 | Oct 3 | Cloud project support email and developer contact to `syllabus@` | Liam | Developer contact moved to `syllabus@` 2026-10-03. The support email is still `hugahound23@gmail.com`: its picker offers only the signed-in account and Google Groups it manages, and Liam's account manages none. Trace adds Liam as a manager of the `syllabus@` group (or makes the change from an account that manages it) |
 | Oct 6 | Lawyer's changes in and deployed as a follow-up PR | Liam | Waits on the lawyer |
 | Oct 6 | Add the six signing and Sparkle secrets, run `release.yml` by hand, check the DMG on a second Mac | Trace, Liam | Built and merged 2026-09-30 (LectureAI #105), off until the secrets exist. See `docs/signing.md`. The `release` environment and the `v*` tag ruleset are set up (2026-10-02); no secrets yet. Every release run, 0.6.0 included, now waits for Trace or Liam to approve it. Make and back up the Sparkle key any time, but set it in the same sitting as the five Apple secrets: the key without them fails the run on purpose. The signed path has never run, so leave room for a fix |
-| Oct 7 | Run `scripts/stripe-live.mjs` with the live price ids, set the secrets, merge the result to deploy | Claude | Kit merged 2026-09-30 (syllabus-accounts #58), see `docs/stripe-live.md`. Since 2026-10-02 the webhook also handles `checkout.session.async_payment_succeeded` (syllabus-accounts #60), and the script lists it from the code; the restricted deletion key is documented with Invoices: Read. Waits on Stripe |
-| Oct 8 | One full live-mode run: sign up, trial, pay, record, top up, refund, delete | Liam | Scripted 2026-10-02 as syllabus-accounts `docs/live-run.md` (#70): fifteen steps with what each should show, about $15 of real charges, the trial ended from the Stripe dashboard, and a log capture checked by `scripts/scan-logs.mjs`. Waits on the two above |
+| Oct 7 | Run `scripts/stripe-live.mjs` with the live price ids, set the secrets, merge the result to deploy | Claude | Kit merged 2026-09-30 (syllabus-accounts #58), see `docs/stripe-live.md`. Since 2026-10-02 the webhook also handles `checkout.session.async_payment_succeeded` (syllabus-accounts #60), and the script lists it from the code; the restricted deletion key is documented with Invoices: Read. 2026-10-12: the script takes **three** price ids, not four (syllabus-accounts #78 removed the top-up), and upgrades went in (#80). Both are merged; their deploys wait for Trace's or Liam's approval in the `production` environment. Trace runs the script (it needs the live key), Claude takes the diff to a PR. Waits on Stripe |
+| Oct 8 | One full live-mode run: sign up, trial, pay, record, upgrade, refund, delete | Liam | Scripted 2026-10-02 as syllabus-accounts `docs/live-run.md` (#70): fifteen steps with what each should show, the trial ended from the Stripe dashboard, and a log capture checked by `scripts/scan-logs.mjs`. 2026-10-12: the top-up step is replaced by an upgrade (Starter to Standard, $6), the deletion step expects two refunds, and the run costs about $17. Waits on the two above |
 | Oct 9 | Go or slip, decided on this table | Trace, Liam | |
 | Oct 12 | Merge main-course-media #189, deploy Pages by hand, announce | Claude, Liam | Draft PR ready 2026-09-30. Merging does not deploy. Since 2026-10-01 it also makes `/syllabus/guide/` public. Pre-flight 2026-10-02: prices, hours and privacy claims match what the account service enforces and stores, and it merges cleanly with main. Announcement, friends and family email and support replies are drafted (the launch copy doc). 2026-10-12: brought up to date with main, every download button points at `/syllabus/install/`, still a draft, waiting on Stripe |
 
@@ -430,12 +447,13 @@ row says otherwise.
   2026-09-29 (syllabus-accounts security batch).
 - ~~Close the gap where a cancellation Stripe never delivers leaves the plan's
   allowance in place.~~ Live 2026-09-29: a 3-day hard cutoff on lost renewals.
-- Top-ups are off in production: `STRIPE_PRICE_TOPUP` is empty, so the
-  account page hides the button. The live swap sets it.
-- Test the restricted account-deletion key in the sandbox. It probably also
-  needs Invoices: Read, which `src/env.ts` does not list.
-- Keep live payment methods to cards and wallets. A delayed payment method
-  would lose a top-up, since `async_payment_succeeded` is not handled.
+- ~~Top-ups are off in production.~~ Removed 2026-10-12 (syllabus-accounts
+  #78): no button, no route, no `STRIPE_PRICE_TOPUP`, no `topups` table.
+- Test the restricted account-deletion key in the sandbox. Invoices: Read is
+  listed now, and after an upgrade deletion also lists the subscription's
+  paid invoices (#80), which that permission should cover.
+- Keep live payment methods to cards and wallets. Account deletion refunds
+  only a card payment.
 
 ### Already built for the paid product
 
@@ -553,9 +571,10 @@ account with a path allowlist and size caps.
 
 ## Still open
 
-- **Insurance.** The broker call. Blocks nothing technically; blocks launch
-  judgment.
-- **Lawyer.** Booked when? $1.5k to $4k budgeted.
+- **Insurance.** The broker call. Blocks nothing technically. Trace and Liam
+  decided 2026-10-12 that it does not hold the launch.
+- **Lawyer.** Booked when? $1.5k to $4k budgeted. Not holding the launch
+  either (2026-10-12); the terms the lawyer sees should include #82.
 - ~~**Pro at $29 or $22.**~~ CLOSED 2026-09-19: **$25**, live on the site
   (main-course-media PR #179). Nets $13.22 at 53% on the Sonnet assistant, and
   still holds 33% if the escalation rate turns out to be 50% rather than the
