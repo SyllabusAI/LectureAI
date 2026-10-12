@@ -6,6 +6,7 @@ no microphone is opened, and no watcher is spawned. From the project root:
     .venv/bin/python test_gui.py
 """
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -508,15 +509,24 @@ def t22b():
         assert gui._configured(), "a signed-in Mac with classes is set up"
         assert not gui.start_url("127.0.0.1", 5173).endswith("/setup"), \
             "the panel should stop reopening Setup once the save lands"
-        # Signed out with no keys on file, the demand is right and must stay.
+        # Signed out with no keys on file, the page offers no key fields, so
+        # the refusal asks for the sign-in, never for keys it hid.
         account.forget()
-        res = client.post("/api/setup", json={
+        body = {
             "openai_key": "", "anthropic_key": "",
             "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"}],
             "notion": {"enabled": False},
-        })
+        }
+        assert client.get("/api/setup").get_json()["byo_keys"] is False
+        res = client.post("/api/setup", json=body)
+        assert res.status_code == 400 and "sign in" in res.get_json()["error"], res.get_json()
+        # A developer who asks for own keys gets the fields and the demand.
+        os.environ["INTAKE_BYO_KEYS"] = "1"
+        assert client.get("/api/setup").get_json()["byo_keys"] is True
+        res = client.post("/api/setup", json=body)
         assert res.status_code == 400 and "both API keys" in res.get_json()["error"]
     finally:
+        os.environ.pop("INTAKE_BYO_KEYS", None)
         account.forget()
         point_config_at(setup_home)
 results.append(run("a signed-in Mac saves setup without keys of its own", t22b))
@@ -1406,14 +1416,14 @@ def t44():
     home.mkdir()
     point_config_at(home)
     try:
-        assert gui._setup_needs() == ["API keys", "a readable class schedule"], \
+        assert gui._setup_needs() == ["a Syllabus sign-in", "a readable class schedule"], \
             gui._setup_needs()
 
         config.SCHEDULE_FILE.write_text(
             'classes = [ { day = "Mon", start = 9, course = "ENTR-4306" } ]\n'
             "tolerance_minutes = 45\n")
         config.reload()
-        assert gui._setup_needs() == ["API keys"], gui._setup_needs()
+        assert gui._setup_needs() == ["a Syllabus sign-in"], gui._setup_needs()
 
         # Signed in: the account provides the keys, so nothing is missing.
         account.save(account.Account(
