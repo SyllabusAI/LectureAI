@@ -92,6 +92,16 @@ it macOS says it could not verify the app and offers only Done or Move to
 Trash. Click Done, open System Settings, choose Privacy & Security, scroll to
 the Security section, click Open Anyway, and confirm. Once per version.
 
+**One line in Terminal instead of the download.** This installs the newest
+release into Applications, checks it against the release's `.sha256`, and
+opens it with no warning. A browser marks the files it downloads for
+Gatekeeper; `curl` does not, so the warning never appears. Run it again to
+update:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SyllabusAI/LectureAI/main/install.sh | bash
+```
+
 When a newer version is out, the panel and the menu bar say so with a link
 to the download. Quit Syllabus, replace the copy in Applications, open it
 again; everything you set up stays.
