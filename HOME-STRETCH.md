@@ -362,7 +362,7 @@ row says otherwise.
 |---|---|---|---|
 | Sep 30 | Apple Developer enrollment, $99 | Trace | Open. Declined 2026-09-17; signing and Sparkle wait on it. Not blocking since 2026-10-12: `install.sh` (#123) installs with no Gatekeeper warning, and `maincoursemedia.com/syllabus/install/` leads with it |
 | Sep 30 | Stripe live mode: activate (EIN, bank), live prices incl. the $5 top-up, live webhook, customer portal, 100%-off code, Stripe Tax with the Texas registration | Trace | Open. No sign of it as of 2026-10-12: `wrangler.jsonc` still has the sandbox prices and an empty top-up. **Blocks the paid launch** |
-| Sep 30 | A card on Groq, to reach the Developer plan | Trace | Open. Free plan caps everyone at 8 audio hours a day |
+| Sep 30 | A card on Groq, to reach the Developer plan | Trace | Done 2026-10-12: card on file (Liam). The free plan's shared audio cap no longer pushes lectures onto the OpenAI fallback |
 | Sep 30 | Anthropic credit and auto-reload | Trace | Done 2026-10-12: auto-reload is on (Liam) |
 | Oct 1 | Insurance broker call | Trace | Open |
 | Oct 1 | Privacy and terms to the lawyer | Liam | Live since 2026-09-29 (syllabus-accounts #45, merged before review). The lawyer is not booked yet |
