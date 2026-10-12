@@ -354,26 +354,26 @@ at Starter, 4 at Standard, all of them at Pro.
 ### To October 12
 
 Status as of 2026-09-29, 13 days out, with the code-side states updated
-2026-10-02. **Outside the code** means only Trace or Liam can do it, and each
+2026-10-02 and launch-day states updated 2026-10-12. **Outside the code** means only Trace or Liam can do it, and each
 one has a clock that is not ours; those states are as last written unless a
 row says otherwise.
 
 | When | Item | Who | State |
 |---|---|---|---|
-| Sep 30 | Apple Developer enrollment, $99 | Trace | Open. Declined 2026-09-17; signing and Sparkle wait on it |
-| Sep 30 | Stripe live mode: activate (EIN, bank), live prices incl. the $5 top-up, live webhook, customer portal, 100%-off code, Stripe Tax with the Texas registration | Trace | Open |
+| Sep 30 | Apple Developer enrollment, $99 | Trace | Open. Declined 2026-09-17; signing and Sparkle wait on it. Not blocking since 2026-10-12: `install.sh` (#123) installs with no Gatekeeper warning, and `maincoursemedia.com/syllabus/install/` leads with it |
+| Sep 30 | Stripe live mode: activate (EIN, bank), live prices incl. the $5 top-up, live webhook, customer portal, 100%-off code, Stripe Tax with the Texas registration | Trace | Open. No sign of it as of 2026-10-12: `wrangler.jsonc` still has the sandbox prices and an empty top-up. **Blocks the paid launch** |
 | Sep 30 | A card on Groq, to reach the Developer plan | Trace | Open. Free plan caps everyone at 8 audio hours a day |
 | Sep 30 | Anthropic credit and auto-reload | Trace | Unconfirmed |
 | Oct 1 | Insurance broker call | Trace | Open |
 | Oct 1 | Privacy and terms to the lawyer | Liam | Live since 2026-09-29 (syllabus-accounts #45, merged before review). The lawyer is not booked yet |
-| Oct 2 | `syllabus@maincoursemedia.com` group and a maincoursemedia.com address for Liam | Trace | Asked 2026-09-29. Google Workspace admin task. Urgent: the live privacy and terms pages already name this address for requests, appeals, and legal notices |
+| Oct 2 | `syllabus@maincoursemedia.com` group and a maincoursemedia.com address for Liam | Trace | Done 2026-10-02: both set up, test mail arrived. Asked 2026-09-29. Google Workspace admin task. Urgent: the live privacy and terms pages already name this address for requests, appeals, and legal notices |
 | Oct 3 | Cloud project support email and developer contact to `syllabus@` | Liam | Developer contact moved to `syllabus@` 2026-10-03. The support email is still `hugahound23@gmail.com`: its picker offers only the signed-in account and Google Groups it manages, and Liam's account manages none. Trace adds Liam as a manager of the `syllabus@` group (or makes the change from an account that manages it) |
 | Oct 6 | Lawyer's changes in and deployed as a follow-up PR | Liam | Waits on the lawyer |
 | Oct 6 | Add the six signing and Sparkle secrets, run `release.yml` by hand, check the DMG on a second Mac | Trace, Liam | Built and merged 2026-09-30 (LectureAI #105), off until the secrets exist. See `docs/signing.md`. The `release` environment and the `v*` tag ruleset are set up (2026-10-02); no secrets yet. Every release run, 0.6.0 included, now waits for Trace or Liam to approve it. Make and back up the Sparkle key any time, but set it in the same sitting as the five Apple secrets: the key without them fails the run on purpose. The signed path has never run, so leave room for a fix |
 | Oct 7 | Run `scripts/stripe-live.mjs` with the live price ids, set the secrets, merge the result to deploy | Claude | Kit merged 2026-09-30 (syllabus-accounts #58), see `docs/stripe-live.md`. Since 2026-10-02 the webhook also handles `checkout.session.async_payment_succeeded` (syllabus-accounts #60), and the script lists it from the code; the restricted deletion key is documented with Invoices: Read. Waits on Stripe |
 | Oct 8 | One full live-mode run: sign up, trial, pay, record, top up, refund, delete | Liam | Scripted 2026-10-02 as syllabus-accounts `docs/live-run.md` (#70): fifteen steps with what each should show, about $15 of real charges, the trial ended from the Stripe dashboard, and a log capture checked by `scripts/scan-logs.mjs`. Waits on the two above |
 | Oct 9 | Go or slip, decided on this table | Trace, Liam | |
-| Oct 12 | Merge main-course-media #189, deploy Pages by hand, announce | Claude, Liam | Draft PR ready 2026-09-30. Merging does not deploy. Since 2026-10-01 it also makes `/syllabus/guide/` public. Pre-flight 2026-10-02: prices, hours and privacy claims match what the account service enforces and stores, and it merges cleanly with main. Announcement, friends and family email and support replies are drafted (the launch copy doc) |
+| Oct 12 | Merge main-course-media #189, deploy Pages by hand, announce | Claude, Liam | Draft PR ready 2026-09-30. Merging does not deploy. Since 2026-10-01 it also makes `/syllabus/guide/` public. Pre-flight 2026-10-02: prices, hours and privacy claims match what the account service enforces and stores, and it merges cleanly with main. Announcement, friends and family email and support replies are drafted (the launch copy doc). 2026-10-12: brought up to date with main, every download button points at `/syllabus/install/`, still a draft, waiting on Stripe |
 
 **P0. Apple and the app** (6 h, plus Apple's own clock)
 - Complete organization enrollment.
@@ -525,8 +525,9 @@ the proposed bar; it is a checklist you sign off, not a feeling.
 **Status 2026-10-02** (syllabus-accounts `docs/threat-model-0.6.md` and
 `docs/asvs-l1-checklist.md`, both re-checked against that day's code):
 
-- **Open and blocking: F-02 (High).** `PANEL_ORIGIN` is still empty. The code
-  is done; it waits on a second registrable domain, or a written acceptance.
+- **F-02 (High), fixed 2026-10-12.** `PANEL_ORIGIN` is the Worker's
+  workers.dev address (syllabus-accounts #77, #79), a different site from the
+  account pages. Nothing in the security pass blocks launch now.
 - **Found and fixed:** F-21 (High). The `quality=high` pass billed on the
   caller's header; it is billed on the first pass's measured length since
   syllabus-accounts #66, and stays off until #104 ships. F-22 (Medium): the
