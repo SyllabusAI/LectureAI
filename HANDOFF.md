@@ -27,7 +27,7 @@ from the launch.
 
 | Surface | What it is | Where it lives | Who deploys it, and how |
 |---|---|---|---|
-| Syllabus.app | PyInstaller bundle of the `intake/` Python package: Flask panel on 127.0.0.1:5173, recorder, watcher, pywebview window, menu bar item, bundled static ffmpeg | `SyllabusAI/LectureAI`, built by `packaging/build.sh`, published as a DMG by `release.yml` on a `vX.Y.Z` tag | Whoever pushes the tag. Latest release: v0.4.0 (2026-09-19). Each user replaces their own copy; there is no self-update yet |
+| Syllabus.app | PyInstaller bundle of the `intake/` Python package: Flask panel on 127.0.0.1:5173, recorder, watcher, pywebview window, menu bar item, bundled static ffmpeg | `SyllabusAI/LectureAI`, built by `packaging/build.sh`, published as a DMG by `release.yml` on a `vX.Y.Z` tag | Whoever pushes the tag. Latest release: v0.4.0 (2026-09-19). From the first release after 0.6.2 the app updates itself with Update now (`intake/selfupdate.py`) until Sparkle is on; 0.6.2 and older reinstall once by hand |
 | Terminal install | The same package via `pipx install git+https://github.com/SyllabusAI/LectureAI` | Same repo; the repo is public so this line works | Nothing to deploy; users run `pipx upgrade intake` |
 | Account service | Hono + TypeScript Cloudflare Worker, D1 database, one `PanelRelay` Durable Object per claimed Mac, the `/proxy/*` metered endpoints, Stripe billing | `SyllabusAI/syllabus-accounts`, live at `https://syllabusaccounts.maincoursemedia.com`, Cloudflare account `896f047d297ba60187557f9029f6fbc5`, D1 `syllabus-accounts` (`9ed6731f-6323-4999-9674-0cb898b991aa`) | A merge to `main` deploys via `deploy.yml` once `CLOUDFLARE_API_TOKEN` is set; by hand from `main`: `npm run db:migrate:remote` then `npm run deploy`. See section 2 |
 | Marketing pages | `/syllabus/` (product page) and `/syllabus/download` (install walkthrough) on maincoursemedia.com; `/syllabus/panel` 302s to Trace's own panel | Private repo `Main-Course-Media/main-course-media` (Astro): `src/pages/syllabus.astro`, `src/pages/syllabus/download.astro`, `public/_redirects`, `public/_headers` | By hand with wrangler to Cloudflare Pages. A merge alone changes nothing live |
@@ -340,7 +340,9 @@ is unknown. Meanwhile `/syllabus/download` (main-course-media PR #176) is a
 real install page: four steps, HTML-and-CSS mocks of both Gatekeeper windows,
 why an unsigned app is blocked, and a troubleshooting FAQ. Cut that
 walkthrough when Developer ID signing lands; the page's header comment says
-what to keep. There is no self-update until the build is signed.
+what to keep. Until the build is signed, Update now in the app
+(`intake/selfupdate.py`) does install.sh's steps from inside the app; a
+Sparkle build hides it.
 
 **CSS specificity on the marketing page.** In `syllabus.astro`, blanket rules
 like `.syl a`, `.syl p`, and `.syl h1, .syl h2, .syl h3` are (0,1,1) and

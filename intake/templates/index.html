@@ -565,6 +565,12 @@
   .flash.warn { background: rgba(178,92,0,.1); color: var(--warn); }
   .flash a { color: inherit; font-weight: 500; }
   .flash code { font-size: 12px; }
+  .flash .flash-btn {
+    font: inherit; font-weight: 600; color: var(--card); background: var(--brand-deep);
+    border: 0; border-radius: 999px; padding: 3px 12px; margin: 0 2px; cursor: pointer;
+  }
+  .flash.err .flash-btn { background: var(--err); }
+  .flash .flash-btn:disabled { opacity: .5; cursor: default; }
   /* The same banner, sat above the record button instead of the page. */
   .flash.rec-flash { margin: 0 0 14px; border-radius: 12px; }
 
@@ -1689,25 +1695,79 @@ function renderToday(s) {
   $("todayLine").innerHTML = `<strong>${DAY_NAMES[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}</strong>${line}`;
 }
 
+// The update notice. In the app it carries Update now (intake/selfupdate.py),
+// which downloads the new version, checks it, and swaps it in; elsewhere it
+// links to the download, or names the pipx command. Built only when what it
+// says changes: the status poll runs every second and a button rebuilt
+// under the pointer can lose its click.
 function renderUpdate(u) {
   const el = $("updateBanner");
-  if (!u || !u.available) { el.style.display = "none"; return; }
+  const job = (u && u.install) || {};
+  const working = ["downloading", "checking", "installing"].includes(job.state);
+  if (!u || (!u.available && !working)) {
+    el.style.display = "none"; el._key = ""; return;
+  }
+  const pct = job.state === "downloading" && job.total
+    ? Math.floor(100 * job.done / job.total) : -1;
+  const key = JSON.stringify([u.version, u.how, u.oneclick, u.url, job.state, job.error, pct]);
+  el.style.display = "block";
+  if (el._key === key) return;
+  el._key = key;
   el.textContent = "";
-  el.appendChild(document.createTextNode(`Syllabus ${u.version} is available. `));
-  if (u.how === "download") {
+  el.classList.toggle("err", job.state === "failed");
+  const text = (t) => el.appendChild(document.createTextNode(t));
+  const download = (label) => {
     const a = document.createElement("a");
     a.href = u.url; a.target = "_blank"; a.rel = "noopener";
-    a.textContent = "Download it";
+    a.textContent = label;
     el.appendChild(a);
-    el.appendChild(document.createTextNode(", then replace the copy in Applications."));
+  };
+  const version = job.version || u.version;
+  if (u.oneclick && working) {
+    if (job.state === "downloading") {
+      text(`Downloading Syllabus ${version}` + (pct >= 0 ? ` (${pct}%)` : "") + "\u2026");
+    } else if (job.state === "checking") {
+      text(`Checking the download of Syllabus ${version}\u2026`);
+    } else {
+      text(`Installing Syllabus ${version}. Syllabus will close and open again in a moment.`);
+    }
+    return;
+  }
+  if (u.oneclick) {
+    if (job.state === "failed") {
+      text(`The update to Syllabus ${version} did not finish: ${job.error}. ` +
+           "The version you have is still installed. ");
+    } else {
+      text(`Syllabus ${u.version} is available. `);
+    }
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "flash-btn"; b.id = "updateNow";
+    b.textContent = job.state === "failed" ? "Try again" : "Update now";
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api("/api/update/install", {});
+      } catch (e) {
+        flash(`The update did not start: ${e.message}.`, true);
+      }
+      el._key = "";
+      poll();
+    };
+    el.appendChild(b);
+    text(" or ");
+    download("download it");
+    text(".");
+  } else if (u.how === "download") {
+    text(`Syllabus ${u.version} is available. `);
+    download("Download it");
+    text(", then replace the copy in Applications.");
   } else {
-    el.appendChild(document.createTextNode("Update with "));
+    text(`Syllabus ${u.version} is available. Update with `);
     const code = document.createElement("code");
     code.textContent = "pipx upgrade intake";
     el.appendChild(code);
-    el.appendChild(document.createTextNode(", then restart the panel."));
+    text(", then restart the panel.");
   }
-  el.style.display = "block";
 }
 
 function render(s) {

@@ -8,13 +8,14 @@ bar's menu, read that file and never the network, so a Mac that is offline
 or a GitHub that is slow costs nothing.
 
 What a person is told depends on how Syllabus was installed. In the app,
-the newer version is a download away and the notice links to it. From a
-pipx install the update is `pipx upgrade intake`, so the notice says that.
-Nothing here replaces itself: an unsigned app that swapped its own files
-would send everyone back through Gatekeeper on each version, and its
-microphone permission with them. A Developer ID signed build that carries
-Sparkle updates itself through intake/sparkle.py; this check keeps running
-beside it for the panel's notice and the pipx path.
+the notice carries Update now, which intake/selfupdate.py carries out: the
+download is fetched by Python, not a browser, so it has no quarantine flag
+and Gatekeeper does not stop it, the same as install.sh. The new ad hoc
+signature does mean macOS asks for the microphone again. From a pipx install
+the update is `pipx upgrade intake`, so the notice says that. A Developer ID
+signed build that carries Sparkle updates itself through intake/sparkle.py
+and hides Update now; this check keeps running beside it for the panel's
+notice and the pipx path.
 
 Other releases on the same repository, the ffmpeg builds the app bundles,
 are tagged ffmpeg-... and are skipped here.
