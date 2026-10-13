@@ -37,6 +37,6 @@ URL="https://github.com/SyllabusAI/LectureAI/releases/download/$PIN_tag/$PIN_ass
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 echo "fetching $URL"
-curl -sfL -o "$TMP/$PIN_asset" "$URL"
+curl -sfL --retry 5 --retry-all-errors --connect-timeout 20 -o "$TMP/$PIN_asset" "$URL"
 echo "$PIN_sha256  $TMP/$PIN_asset" | shasum -a 256 -c -
 tar -xzf "$TMP/$PIN_asset" -C "$DIR"

@@ -52,7 +52,8 @@ cd "$WORK"
 
 if [[ ! -f "ffmpeg-${VERSION}.tar.xz" ]]; then
     echo "fetching $SOURCE"
-    curl -sfL -o "ffmpeg-${VERSION}.tar.xz" "$SOURCE"
+    # ffmpeg.org drops a connection now and then; one blip should not fail a build.
+    curl -sfL --retry 5 --retry-all-errors --connect-timeout 20 -o "ffmpeg-${VERSION}.tar.xz" "$SOURCE"
 fi
 echo "$SHA256  ffmpeg-${VERSION}.tar.xz" | shasum -a 256 -c -
 rm -rf "ffmpeg-${VERSION}"
