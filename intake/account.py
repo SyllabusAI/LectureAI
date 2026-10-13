@@ -20,8 +20,11 @@ off altogether, and the Setup page then does not mention it.
 
 from __future__ import annotations
 
+import getpass
+import hashlib
 import json
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -144,6 +147,75 @@ def device_name() -> str:
     except (OSError, subprocess.SubprocessError):
         pass
     return socket.gethostname().split(".")[0] or "A Mac"
+
+
+# What machine_id() is derived from. Bumping the version gives every Mac a
+# new id, which the service would treat as a new Mac: do not, without reason.
+_MACHINE_SALT = "syllabus-machine-v1"
+#: Where machine_id() keeps a random id when the hardware one is unavailable
+#: (not a Mac, or ioreg failed). In the data root rather than a profile's
+#: home, so signing out, which clears the profile's account files, keeps it.
+MACHINE_FILE_NAME = ".machine-id"
+
+
+def _hardware_uuid() -> str:
+    """The Mac's IOPlatformUUID, or "" when there is none to read."""
+    try:
+        out = subprocess.run(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                             capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    found = re.search(r'"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]{36})"', out.stdout or "")
+    return found.group(1).upper() if found else ""
+
+
+def _stored_random_id() -> str:
+    """A random id kept in the data root, made the first time it is asked for."""
+    path = config.ROOT_DIR / MACHINE_FILE_NAME
+    try:
+        value = path.read_text().strip()
+        if re.fullmatch(r"[0-9a-f]{64}", value):
+            return value
+    except OSError:
+        pass
+    value = secrets.token_hex(32)
+    try:
+        config.write_private(path, value + "\n")
+    except OSError:
+        return ""
+    return value
+
+
+def machine_id() -> str:
+    """An opaque id for this Mac, this macOS user and this data folder.
+
+    Sent with /device/start so that when this Mac signs in to an account it
+    already holds an entry in (it lost account.json: the data folder was
+    removed, the app was reinstalled onto a clean home), the service replaces
+    that entry instead of listing the Mac twice. The service keeps only a hash
+    of it, bound to the account (syllabus-accounts src/devices.ts machineKey).
+
+    A one-way hash of the hardware UUID, so it survives anything short of new
+    hardware, mixed with the user and the data root, so two macOS users on one
+    Mac, or a development checkout with its own $INTAKE_HOME, are different
+    Macs to the service. The hardware UUID itself never leaves the Mac. Where
+    there is none (Linux CI, ioreg missing), a random id stored in the data
+    root stands in. Never raises: "" means send nothing, and the service then
+    behaves as it did before ids existed.
+    """
+    try:
+        hardware = _hardware_uuid()
+        if not hardware:
+            return _stored_random_id()
+        try:
+            user = getpass.getuser()
+        except (OSError, KeyError):
+            user = ""
+        material = "\0".join([_MACHINE_SALT, hardware, user, str(config.ROOT_DIR)])
+        return hashlib.sha256(material.encode()).hexdigest()
+    except Exception as exc:  # noqa: BLE001 - an id is a nicety; sign-in must not fail on it
+        _say(f"could not work out this Mac's id; signing in without one: {exc}")
+        return ""
 
 
 # --- Talking to the service -------------------------------------------------
@@ -331,8 +403,11 @@ def start_claim(name: str | None = None, background: bool = True) -> dict:
     if claim_status()["running"]:
         raise RuntimeError("a sign-in is already waiting for its code")
     name = (name or "").strip() or device_name()
-    status, data = call("POST", "/device/start",
-                        {"name": name, "profile": config.PROFILE.name})
+    start = {"name": name, "profile": config.PROFILE.name}
+    machine = machine_id()
+    if machine:
+        start["machine"] = machine
+    status, data = call("POST", "/device/start", start)
     if status != 200 or not data.get("device_code") or not data.get("user_code"):
         raise RuntimeError(f"the account service could not start a sign-in ({status})")
     expires_at = time.time() + int(data.get("expires_in") or DEFAULT_CODE_SECONDS)
