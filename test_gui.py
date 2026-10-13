@@ -1093,7 +1093,9 @@ def t35():
             assert res.status_code == 200, res.get_data(as_text=True)
             out = res.get_json()
             assert out["user_code"] == "ABCD-EFGH" and "device_code" not in out, out
-            assert calls[-1][3] == {"name": "Test Mac", "profile": "syllabus"}, calls[-1]
+            sent = dict(calls[-1][3])
+            assert len(sent.pop("machine", "")) == 64, calls[-1]  # this Mac's id (test_account.py)
+            assert sent == {"name": "Test Mac", "profile": "syllabus"}, calls[-1]
             a = client.get("/api/account").get_json()
             assert a["claim"]["running"] and a["claim"]["user_code"] == "ABCD-EFGH", a
             assert client.post("/api/account/claim", json={}).status_code == 409, "one claim at a time"

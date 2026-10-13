@@ -8,6 +8,7 @@ project root:
 """
 import json
 import os
+import re
 import stat
 import time
 import sys
@@ -132,7 +133,9 @@ def t3():
     started = account.start_claim("Kitchen iMac", background=False)
     assert started["user_code"] == "WXYZ-2345" and started["running"], started
     assert started["verification_uri_complete"].endswith("code=WXYZ-2345")
-    assert service.calls[0][3] == {"name": "Kitchen iMac", "profile": "syllabus"}, service.calls[0]
+    sent = dict(service.calls[0][3])
+    assert re.fullmatch(r"[0-9a-f]{64}", sent.pop("machine", "")), service.calls[0]
+    assert sent == {"name": "Kitchen iMac", "profile": "syllabus"}, service.calls[0]
     status = account.claim_status()
     assert status["running"] and 890 < status["expires_in"] <= 900, status
 
@@ -975,6 +978,79 @@ def t_whoami_refreshes_email():
     assert account.whoami()[0] == "revoked" and account.load() is None
     reset()
 results.append(run("whoami keeps the stored email current, and only from a 200 about this account", t_whoami_refreshes_email))
+
+
+def t_machine_id():
+    """The id /device/start carries so the service can replace this Mac's old entry."""
+    real_hw, real_root = account._hardware_uuid, config.ROOT_DIR
+    uuid = "12345678-ABCD-4EF0-9123-456789ABCDEF"
+    try:
+        account._hardware_uuid = lambda: uuid
+        first = account.machine_id()
+        assert re.fullmatch(r"[0-9a-f]{64}", first), first
+        assert account.machine_id() == first, "the same Mac, user and folder is the same id"
+        assert uuid not in first and uuid.lower().replace("-", "") not in first, "the hardware UUID is not sent"
+        # Reinstalling the app, or losing account.json, changes none of the inputs.
+        account.forget()
+        assert account.machine_id() == first
+        # A development checkout with its own $INTAKE_HOME is a different Mac
+        # to the service, so signing it in never retires the real install.
+        config.ROOT_DIR = real_root / "elsewhere"
+        assert account.machine_id() != first
+        config.ROOT_DIR = real_root
+        account._hardware_uuid = lambda: "87654321-ABCD-4EF0-9123-456789ABCDEF"
+        assert account.machine_id() != first, "another Mac is another id"
+
+        # No hardware UUID (not a Mac): a random id, kept private in the data
+        # root, and the same on every ask until that file goes.
+        account._hardware_uuid = lambda: ""
+        stored = config.ROOT_DIR / account.MACHINE_FILE_NAME
+        stored.unlink(missing_ok=True)
+        fallback = account.machine_id()
+        assert re.fullmatch(r"[0-9a-f]{64}", fallback), fallback
+        assert stored.read_text().strip() == fallback
+        assert stat.S_IMODE(stored.stat().st_mode) == 0o600
+        account.forget()
+        assert stored.exists() and account.machine_id() == fallback, "signing out keeps it"
+        stored.write_text("garbage")
+        assert account.machine_id() != "garbage", "a damaged file is replaced"
+
+        # Whatever goes wrong, sign-in still starts, just without an id.
+        def broken():
+            raise RuntimeError("ioreg exploded")
+        account._hardware_uuid = broken
+        assert account.machine_id() == ""
+        service = reset()
+        account.start_claim("Kitchen iMac", background=False)
+        assert service.calls[0][3] == {"name": "Kitchen iMac", "profile": "syllabus"}, service.calls[0]
+        account.cancel_claim()
+    finally:
+        account._hardware_uuid, config.ROOT_DIR = real_hw, real_root
+        reset()
+results.append(run("sign-in sends a stable, opaque id for this Mac, and never fails for want of one", t_machine_id))
+
+
+def t_hardware_uuid_parse():
+    real_run = account.subprocess.run
+    sample = ('+-o J316sAP  <class IOPlatformExpertDevice>\n'
+              '    "IOPlatformSerialNumber" = "C02XXXXXXX"\n'
+              '    "IOPlatformUUID" = "457f0000-1111-2222-3333-444455556666"\n')
+
+    class Done:
+        stdout = sample
+    try:
+        account.subprocess.run = lambda *a, **k: Done()
+        assert account._hardware_uuid() == "457F0000-1111-2222-3333-444455556666"
+        Done.stdout = "nothing useful"
+        assert account._hardware_uuid() == ""
+
+        def missing(*a, **k):
+            raise FileNotFoundError("/usr/sbin/ioreg")
+        account.subprocess.run = missing
+        assert account._hardware_uuid() == ""
+    finally:
+        account.subprocess.run = real_run
+results.append(run("reads the hardware UUID from ioreg, and only that", t_hardware_uuid_parse))
 
 
 print()
