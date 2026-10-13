@@ -34,7 +34,10 @@ running() {
 
 main() {
     [[ "$(uname -s)" == "Darwin" ]] || die "Syllabus runs on a Mac only."
-    [[ "$(uname -m)" == "arm64" ]] || die "Syllabus needs a Mac with Apple silicon (M1 or newer)."
+    # The chip, not the shell: a Terminal running under Rosetta reports
+    # x86_64 from uname on an Apple silicon Mac.
+    local chip=x86_64
+    [[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" == 1 ]] && chip=arm64
     local major
     major="$(sw_vers -productVersion | cut -d. -f1)"
     (( major >= 13 )) || die "Syllabus needs macOS 13 or newer. This Mac has $(sw_vers -productVersion)."
@@ -98,6 +101,12 @@ main() {
     hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mnt" "$tmp/$dmg" \
         || die "Could not open $dmg."
     [[ -d "$mnt/Syllabus.app" ]] || die "$dmg does not contain Syllabus.app."
+    # Universal releases run on both kinds of Mac; the earlier ones run on
+    # Apple silicon only, so an Intel Mac asking for one of those (or for the
+    # latest, before the first universal release) stops here, before the copy
+    # in Applications is replaced. /usr/bin/file ships with macOS; lipo does not.
+    [[ "$(file -b "$mnt/Syllabus.app/Contents/MacOS/Syllabus")" == *"$chip"* ]] \
+        || die "Syllabus $version runs only on Macs with Apple silicon (M1 or newer)."
     rm -rf "$app"
     # ditto keeps the symlinks and the code signature of the bundle.
     ditto "$mnt/Syllabus.app" "$app"

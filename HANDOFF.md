@@ -75,7 +75,9 @@ writes to his Drive and Notion.
 
 To ship to everybody: bump `__version__` in `intake/__init__.py`, merge, then
 tag that commit `vX.Y.Z` and push the tag. `release.yml` runs the test suites
-on a macOS runner, builds the app, wraps it with `packaging/dmg.sh`, and
+on a macOS runner, builds the app on an Apple silicon runner and on an Intel
+one, joins the two into one universal app (`packaging/universal.py`), runs it
+on both kinds of Mac, wraps it with `packaging/dmg.sh`, and
 publishes a public GitHub Release with `packaging/release-notes.md` as the
 notes. The tag must equal the version or the workflow refuses. Every running
 panel polls the release list once a day (`intake/updates.py`) and shows a

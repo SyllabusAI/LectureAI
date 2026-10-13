@@ -164,15 +164,20 @@ Developer ID" in `packaging/release-notes.md`).
 
 ## What happens on each signed release
 
-1. `build.sh` builds the app; with Sparkle on it also fetches the pinned
-   Sparkle framework (checked against its sha256) and embeds it, and the
-   spec writes `SUFeedURL` and `SUPublicEDKey` into Info.plist.
+1. `build.sh` builds the app on an Apple silicon runner and on an Intel
+   runner, and `packaging/universal.py` joins the two into one universal app
+   (neither job sees a secret). With Sparkle on, `packaging/sparkle.sh` then
+   fetches the pinned Sparkle framework (checked against its sha256; it
+   already carries both architectures), embeds it, and writes `SUFeedURL`
+   and `SUPublicEDKey` into Info.plist.
 2. The certificate is imported into a throwaway keychain.
 3. `packaging/sign.sh` signs inside out with the hardened runtime and a
    secure timestamp: every library and extension module, then the
    executables (Syllabus, ffmpeg, ffprobe) with `packaging/entitlements.plist`,
    then Python.framework, then Sparkle's helpers as Sparkle documents, then
-   the app. It ends with `codesign --verify --deep --strict`.
+   the app. It ends with `codesign --verify --deep --strict`. Each signature
+   covers both slices of a universal file; `packaging/universal.py check`
+   then confirms every Mach-O still has both.
 4. `packaging/notarize.sh` notarizes the app and staples it.
 5. `dmg.sh` wraps it; the image is signed, notarized, stapled, and its
    `.sha256` rewritten (stapling changes the file).

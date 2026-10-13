@@ -1,10 +1,10 @@
 """Sparkle self-update, for a signed Syllabus.app that carries it.
 
-Off unless the build turned it on. packaging/build.sh embeds
-Contents/Frameworks/Sparkle.framework and syllabus.spec writes SUFeedURL and
-SUPublicEDKey into Info.plist only when the release workflow hands them the
-EdDSA public key, and the workflow does that only for a Developer ID signed,
-notarized build (docs/signing.md). Every other build, the unsigned releases,
+Off unless the build turned it on. packaging/sparkle.sh embeds
+Contents/Frameworks/Sparkle.framework and writes SUFeedURL and SUPublicEDKey
+into Info.plist only when the release workflow hands it the EdDSA public
+key, and the workflow does that only for a Developer ID signed, notarized
+build (docs/signing.md). Every other build, the unsigned releases,
 a local build.sh, a pipx install, has neither, so `start` returns False and
 nothing here touches Cocoa.
 

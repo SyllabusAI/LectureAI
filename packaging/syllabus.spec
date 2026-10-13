@@ -80,19 +80,9 @@ exe = EXE(
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Syllabus")
 
-# Sparkle self-update, only when build.sh was given the EdDSA public key
-# (docs/signing.md). Unset, none of these keys exist and intake/sparkle.py
-# stays off. Checked daily, like intake/updates.py; installing still asks.
-sparkle_plist = {}
-if os.environ.get("SYLLABUS_SPARKLE_PUBLIC_KEY"):
-    sparkle_plist = {
-        "SUPublicEDKey": os.environ["SYLLABUS_SPARKLE_PUBLIC_KEY"],
-        "SUFeedURL": os.environ.get("SYLLABUS_SPARKLE_FEED_URL") or
-        "https://github.com/SyllabusAI/LectureAI/releases/latest/download/appcast.xml",
-        "SUEnableAutomaticChecks": True,
-        "SUScheduledCheckInterval": 86400,
-        "SUAutomaticallyUpdate": False,
-    }
+# Sparkle's Info.plist keys (SUPublicEDKey, SUFeedURL, the daily check) are
+# not written here: packaging/sparkle.sh adds them with the framework, after
+# the build, so the release workflow can add them once to the universal app.
 
 app = BUNDLE(
     coll,
@@ -130,6 +120,5 @@ app = BUNDLE(
         # falls back to AppleScript.
         "NSAppleEventsUsageDescription":
             "Syllabus adds the deadlines from your lectures to Calendar.",
-        **sparkle_plist,
     },
 )

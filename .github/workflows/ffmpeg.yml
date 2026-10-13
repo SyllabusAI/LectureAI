@@ -1,11 +1,18 @@
-# Build the static LGPL ffmpeg that ships inside Syllabus.app, on an Apple
-# silicon runner, and publish it as a GitHub Release when asked.
+# Build the static LGPL ffmpeg that ships inside Syllabus.app, for both Apple
+# silicon and Intel, and publish it as a GitHub Release when asked.
+#
+# Each architecture is built natively on its own runner by
+# packaging/ffmpeg/build.sh (which checks the result runs: the microphone
+# input, the AAC encoder, nothing linked outside macOS), then
+# packaging/ffmpeg/universal.sh joins the two with lipo into one ffmpeg and
+# one ffprobe that run on either kind of Mac.
 #
 # Every push that touches the build recipe runs the build and keeps the
 # result as a workflow artifact, so a change can be checked before it is
 # published. Publishing is a manual run from main with "publish" ticked: it
 # creates the release named in packaging/ffmpeg/release and attaches the
-# tarball and its checksum. packaging/build.sh downloads exactly that file.
+# tarball and its checksum. packaging/ffmpeg/fetch.sh downloads exactly that
+# file, once its sha256 is recorded in packaging/ffmpeg/release.
 name: ffmpeg for Syllabus.app
 
 on:
@@ -25,11 +32,46 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15  # Apple silicon
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15        # Apple silicon
+          - arch: x86_64
+            runner: macos-15-intel  # Intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Build ffmpeg and ffprobe
-        run: packaging/ffmpeg/build.sh "$RUNNER_TEMP/ffmpeg"
+      - name: Build ffmpeg and ffprobe for ${{ matrix.arch }}
+        run: packaging/ffmpeg/build.sh "$RUNNER_TEMP/ffmpeg-${{ matrix.arch }}" ${{ matrix.arch }}
+      # tar keeps the executable bits, which an artifact upload drops.
+      - name: Pack
+        run: tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/ffmpeg-${{ matrix.arch }}.tar.gz" "ffmpeg-${{ matrix.arch }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ffmpeg-${{ matrix.arch }}
+          path: ${{ runner.temp }}/ffmpeg-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  universal:
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ffmpeg-*
+          path: ${{ runner.temp }}
+          merge-multiple: true
+
+      - name: Join the two into universal binaries
+        run: |
+          set -euo pipefail
+          for arch in arm64 x86_64; do
+            tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/ffmpeg-$arch.tar.gz"
+          done
+          packaging/ffmpeg/universal.sh "$RUNNER_TEMP/ffmpeg-arm64" "$RUNNER_TEMP/ffmpeg-x86_64" "$RUNNER_TEMP/ffmpeg"
 
       - name: Package
         id: package
@@ -43,6 +85,7 @@ jobs:
           shasum -a 256 "$PIN_asset" | tee "$PIN_asset.sha256"
           echo "asset=$PIN_asset" >> "$GITHUB_OUTPUT"
           echo "tag=$PIN_tag" >> "$GITHUB_OUTPUT"
+          lipo -info ffmpeg ffprobe
           ./ffmpeg -hide_banner -version | head -1
 
       - name: Keep the result
@@ -71,4 +114,4 @@ jobs:
           gh release create "$TAG" "$ASSET" "$ASSET.sha256" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
             --title "ffmpeg $VERSION for Syllabus.app" \
-            --notes "$(printf 'Static ffmpeg and ffprobe for Apple silicon, built from the ffmpeg %s release by packaging/ffmpeg/build.sh with GPL and nonfree parts disabled. LGPL 2.1; license texts are in the tarball. This is a build input for Syllabus.app, not something to install by hand.\n\nsha256: %s' "$VERSION" "$(cut -d' ' -f1 "$ASSET.sha256")")"
+            --notes "$(printf 'Static universal ffmpeg and ffprobe for Apple silicon and Intel Macs (arm64 and x86_64 slices), built from the ffmpeg %s release by packaging/ffmpeg/build.sh with GPL and nonfree parts disabled, on one runner of each architecture, joined with lipo. LGPL 2.1; license texts are in the tarball. This is a build input for Syllabus.app, not something to install by hand.\n\nsha256: %s' "$VERSION" "$(cut -d' ' -f1 "$ASSET.sha256")")"

@@ -1,11 +1,27 @@
 # Build Syllabus.app and its disk image, and publish them as a GitHub Release.
 #
-# Pushing a tag vX.Y.Z that matches intake.__version__ builds the app on an
-# Apple silicon runner, wraps it in Syllabus-X.Y.Z.dmg, and creates the
-# release with the image and its checksum attached. The app's update notice
-# (intake/updates.py) reads that list. A manual run, or a push touching the
-# packaging, builds everything and keeps the image as a workflow artifact
-# without publishing, so the recipe can be checked first.
+# Pushing a tag vX.Y.Z that matches intake.__version__ builds one universal
+# app that runs natively on Apple silicon and on Intel Macs, wraps it in
+# Syllabus-X.Y.Z.dmg, and creates the release with the image and its
+# checksum attached. The app's update notice (intake/updates.py) reads that
+# list. A manual run builds everything and keeps the image as a workflow
+# artifact without publishing, so the recipe can be checked first; a manual
+# run from a branch other than main stops before the `build` job, which only
+# main and v* tags may reach (the `release` environment's rule), and still
+# shows whether the universal app builds and runs on both kinds of Mac.
+#
+# Universal, in five jobs (packaging/universal.py says why not PyInstaller's
+# own universal2 mode):
+#   resolve    one exact Python and one version of every package, picked on
+#              Intel (packaging/pins.py), for both builds
+#   bundle     the app built twice by packaging/build.sh, natively: on Apple
+#              silicon (macos-15) and on Intel (macos-15-intel), each one
+#              self-tested on the Mac it was built on
+#   universal  the two joined with lipo by packaging/universal.py, which fails
+#              if their file lists or anything but compiled code differ, then
+#              checked: every Mach-O has both slices
+#   intel      the joined app's Intel slice run on a real Intel Mac
+#   build      Sparkle, signing, notarization, the disk image, the release
 #
 # Signing: when the Developer ID and App Store Connect secrets exist
 # (docs/signing.md lists them), the app is signed inside out by
@@ -32,6 +48,14 @@ on:
 permissions:
   contents: write
 
+env:
+  # The minor version both builds use; `resolve` settles the exact release.
+  PYTHON_VERSION: "3.12"
+  # A pinned ffmpeg that is not published yet (packaging/ffmpeg/release with
+  # no sha256) is built from source instead, but only on a run that cannot
+  # publish. A tag always gets the pinned, checksummed one or fails.
+  SYLLABUS_FFMPEG_BUILD_UNPINNED: ${{ startsWith(github.ref, 'refs/tags/v') && '0' || '1' }}
+
 jobs:
   # A gate, not a duplicate of CI: this runs on the macOS runner the app is
   # actually built on, and it is what `build` waits for. macOS ships lsof at
@@ -39,12 +63,12 @@ jobs:
   # below fetches it.
   tests:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       # `transcribe.duration_seconds` shells out to ffprobe, which the runner
       # image does not carry: on 2026-09-19 that failed three assertions across
@@ -56,13 +80,8 @@ jobs:
       - name: ffmpeg and ffprobe, the build the app bundles
         run: |
           set -euo pipefail
-          eval "$(sed 's/^/PIN_/' packaging/ffmpeg/release)"
           DIR="$RUNNER_TEMP/ffmpeg"
-          mkdir -p "$DIR"
-          curl -sfL -o "$DIR/$PIN_asset" \
-            "https://github.com/$GITHUB_REPOSITORY/releases/download/$PIN_tag/$PIN_asset"
-          echo "$PIN_sha256  $DIR/$PIN_asset" | shasum -a 256 -c -
-          tar -xzf "$DIR/$PIN_asset" -C "$DIR"
+          packaging/ffmpeg/fetch.sh "$DIR"
           echo "$DIR" >> "$GITHUB_PATH"
           "$DIR/ffprobe" -version | head -1
 
@@ -83,8 +102,187 @@ jobs:
             exit 1
           fi
 
+  # The two builds are joined file by file, so they must agree on everything
+  # but compiled code: the same Python release and the same version of every
+  # package. Resolved on Intel because that side has fewer wheels (cryptography
+  # 49 and later publish none for Intel Macs); packaging/pins.py says more.
+  resolve:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    outputs:
+      python: ${{ steps.python.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: The exact Python
+        id: python
+        run: echo "version=$(python -c 'import platform; print(platform.python_version())')" >> "$GITHUB_OUTPUT"
+      - name: One version of every package
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python packaging/pins.py > "$RUNNER_TEMP/pins.txt"
+          cat "$RUNNER_TEMP/pins.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pins
+          path: ${{ runner.temp }}/pins.txt
+          if-no-files-found: error
+
+  bundle:
+    needs: resolve
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15        # Apple silicon
+          - arch: x86_64
+            runner: macos-15-intel  # Intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.resolve.outputs.python }}
+
+      - name: This runner and its Python are ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          echo "uname: $(uname -m); python: $(python -c 'import platform; print(platform.machine())')"
+          [[ "$(python -c 'import platform; print(platform.machine())')" == "${{ matrix.arch }}" ]]
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pins
+          path: ${{ runner.temp }}
+
+      - name: Install the pinned packages and the app
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install --prefer-binary -r "$RUNNER_TEMP/pins.txt"
+          python -m pip install --no-deps -e .
+          python -m pip check
+
+      - name: ffmpeg and ffprobe
+        run: packaging/ffmpeg/fetch.sh packaging/build/ffmpeg
+
+      # No Sparkle and no signing here: both happen once, to the joined app,
+      # in the `build` job, the only one that can read the secrets.
+      - name: Build Syllabus.app for ${{ matrix.arch }}
+        env:
+          PYTHON: python
+          SYLLABUS_DIST: dist/${{ matrix.arch }}
+        run: packaging/build.sh
+
+      - name: It runs on this Mac
+        run: |
+          INTAKE_HOME="$RUNNER_TEMP/home" \
+            "dist/${{ matrix.arch }}/Syllabus.app/Contents/MacOS/Syllabus" --self-test ${{ matrix.arch }}
+
+      # An artifact upload drops symlinks and permissions, which the bundle
+      # needs, so it travels as a tarball.
+      - name: Pack
+        run: tar -C "dist/${{ matrix.arch }}" -czf "$RUNNER_TEMP/Syllabus-${{ matrix.arch }}.tar.gz" Syllabus.app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: app-${{ matrix.arch }}
+          path: ${{ runner.temp }}/Syllabus-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  universal:
+    needs: [resolve, bundle]
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.resolve.outputs.python }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: app-*
+          path: ${{ runner.temp }}/apps
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pins
+          path: ${{ runner.temp }}
+
+      # universal.py reads the Python packed into each main executable with
+      # PyInstaller's own reader, the same version that packed it.
+      - name: PyInstaller, to read the two builds
+        run: python -m pip install "$(grep -i '^pyinstaller==' "$RUNNER_TEMP/pins.txt")"
+
+      - name: Join the two builds
+        run: |
+          set -euo pipefail
+          for arch in arm64 x86_64; do
+            mkdir -p "$RUNNER_TEMP/$arch"
+            tar -C "$RUNNER_TEMP/$arch" -xzf "$RUNNER_TEMP/apps/Syllabus-$arch.tar.gz"
+          done
+          python packaging/universal.py merge \
+            "$RUNNER_TEMP/arm64/Syllabus.app" "$RUNNER_TEMP/x86_64/Syllabus.app" dist/Syllabus.app
+
+      - name: Every Mach-O has an arm64 and an x86_64 slice
+        run: python packaging/universal.py check dist/Syllabus.app
+
+      - name: The arm64 slice runs on Apple silicon
+        run: INTAKE_HOME="$RUNNER_TEMP/home" dist/Syllabus.app/Contents/MacOS/Syllabus --self-test arm64
+
+      # The size people download, before signing adds a few kilobytes.
+      - name: Size
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/preview"
+          packaging/dmg.sh dist/Syllabus.app "$RUNNER_TEMP/preview" >/dev/null
+          {
+            echo "### Universal Syllabus.app"
+            echo "- app: $(du -sh dist/Syllabus.app | cut -f1)"
+            echo "- disk image: $(du -h "$RUNNER_TEMP"/preview/Syllabus-*.dmg | cut -f1)"
+            echo "- arm64 build alone: $(tar -tzvf "$RUNNER_TEMP/apps/Syllabus-arm64.tar.gz" | awk '{s+=$5} END {printf "%.0fM", s/1048576}')"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Pack
+        run: tar -C dist -czf "$RUNNER_TEMP/Syllabus-universal.tar.gz" Syllabus.app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: app-universal
+          path: ${{ runner.temp }}/Syllabus-universal.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  # The joined app on a real Intel Mac: the x86_64 slice of every file, the
+  # Python packed into the arm64 slice (the bootloader reads the archive at the
+  # end of the file), and the Intel ffmpeg.
+  intel:
+    needs: universal
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: app-universal
+          path: ${{ runner.temp }}
+      - name: The x86_64 slice runs on Intel
+        run: |
+          set -euo pipefail
+          echo "$(uname -m), $(sysctl -n machdep.cpu.brand_string), macOS $(sw_vers -productVersion)"
+          [[ "$(uname -m)" == x86_64 ]]
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/Syllabus-universal.tar.gz"
+          APP="$RUNNER_TEMP/Syllabus.app"
+          codesign --verify --deep --strict "$APP"
+          INTAKE_HOME="$RUNNER_TEMP/home" arch -x86_64 "$APP/Contents/MacOS/Syllabus" --self-test x86_64
+
   build:
-    needs: tests
+    needs: [tests, universal, intel]
+    # Only main and v* tags may use the `release` environment; a branch run
+    # ends with `intel` rather than failing here.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-15  # Apple silicon
     # The signing and Sparkle secrets live on the `release` environment, not
     # the repository, so only this job can read them and only when the
@@ -96,12 +294,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install the package with the app and build extras
+      # The app itself was built by `bundle` and `universal`; this job needs
+      # the package only for its version and packaging/appcast.py.
+      - name: Install the package
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e '.[app,build]'
+          python -m pip install -e .
 
       - name: The tag must be the package's version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -167,12 +367,23 @@ jobs:
           python -m pip install --quiet cryptography
           echo "public=$(python packaging/appcast.py --public-key-from-env SPARKLE_ED_PRIVATE_KEY)" >> "$GITHUB_OUTPUT"
 
-      - name: Build Syllabus.app
+      - name: The universal app
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: app-universal
+          path: ${{ runner.temp }}
+      - name: Unpack
+        run: |
+          mkdir -p dist
+          tar -C dist -xzf "$RUNNER_TEMP/Syllabus-universal.tar.gz"
+
+      # The framework and its Info.plist keys, added once to the joined app.
+      # Sparkle.framework ships with both slices already.
+      - name: Add Sparkle
+        if: steps.gates.outputs.sparkle == 'true'
         env:
-          PYTHON: python
-          # Empty unless Sparkle is on; build.sh then embeds nothing.
           SYLLABUS_SPARKLE_PUBLIC_KEY: ${{ steps.sparkle_key.outputs.public }}
-        run: packaging/build.sh
+        run: packaging/sparkle.sh dist/Syllabus.app
 
       # A throwaway keychain holding only the Developer ID certificate. The
       # runner is discarded after the job, and the last step deletes it anyway.
@@ -244,6 +455,14 @@ jobs:
           ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
           ASC_API_KEY_PATH: ${{ steps.asc.outputs.key }}
         run: packaging/notarize.sh dist/Syllabus.app
+
+      # The app as it will ship, signed or ad hoc: still both slices in every
+      # Mach-O (lipo -archs on each), and the Apple silicon slice still runs.
+      - name: Every Mach-O in the final app has an arm64 and an x86_64 slice
+        run: |
+          set -euo pipefail
+          python packaging/universal.py check dist/Syllabus.app
+          INTAKE_HOME="$RUNNER_TEMP/home" dist/Syllabus.app/Contents/MacOS/Syllabus --self-test arm64
 
       - name: Build the disk image
         id: dmg
