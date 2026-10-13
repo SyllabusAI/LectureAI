@@ -267,7 +267,12 @@ class _RealSocket:
         )
 
     def run_forever(self) -> None:
-        self._app.run_forever(ping_interval=PING_SECONDS, ping_timeout=PING_SECONDS // 3)
+        # certifi's bundle, not the system default: the packaged app has no
+        # OpenSSL CA path, so the default store is empty and every wss://
+        # handshake fails with CERTIFICATE_VERIFY_FAILED.
+        import certifi
+        self._app.run_forever(ping_interval=PING_SECONDS, ping_timeout=PING_SECONDS // 3,
+                              sslopt={"ca_certs": certifi.where()})
 
     def send(self, text: str) -> None:
         self._app.send(text)
