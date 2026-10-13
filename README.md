@@ -103,9 +103,13 @@ update:
 curl -fsSL https://raw.githubusercontent.com/SyllabusAI/LectureAI/main/install.sh | bash
 ```
 
-When a newer version is out, the panel and the menu bar say so with a link
-to the download. Quit Syllabus, replace the copy in Applications, open it
-again; everything you set up stays.
+When a newer version is out, the panel and the menu bar say so. Click
+**Update now**: Syllabus downloads the new version, checks it, closes, and
+opens again as the new version. Everything you set up stays. It waits while
+a recording is under way or a lecture is being processed, and if anything
+goes wrong the version you have stays installed. Copies of 0.6.2 and older
+only have the download link; install once with the line above and every
+update after that is one click.
 
 **From Terminal instead.** The same program without the window, for anyone
 who prefers a command line:
@@ -1041,9 +1045,18 @@ bundled ffmpeg) runs on both kinds of Mac before the workflow wraps it with
 `packaging/dmg.sh`, and publishes the image and its checksum as a GitHub
 Release with the notes in `packaging/release-notes.md`. The tag has to match
 the version or the workflow refuses. Every running panel asks GitHub for the
-release list once a day (`intake/updates.py`) and shows a notice with the
-download link, or the `pipx upgrade` line for a Terminal install; nothing
-replaces itself until the build is signed.
+release list once a day (`intake/updates.py`) and shows a notice: in the
+app, an Update now button (`intake/selfupdate.py`), or the `pipx upgrade`
+line for a Terminal install. Update now does what `install.sh` does from
+inside the app: it downloads `Syllabus-X.Y.Z.dmg` and its `.sha256` from the
+release (HTTPS, github.com/SyllabusAI/LectureAI release files only), checks
+the image against the checksum, copies the app out of it next to the running
+one, refuses a copy whose bundle identifier, `CFBundleShortVersionString`, or
+architecture is not the expected one, then hands off to a small script
+outside the bundle and quits. The script waits for the app to exit, renames
+the old app aside, renames the new one into place, opens it, and only then
+deletes the old one; any failure puts the old app back. A build that carries
+Sparkle hides the button and keeps Sparkle's path.
 
 The bundle carries its own ffmpeg and ffprobe, so Homebrew is not needed on
 a Mac that runs the app. They are static builds of a pinned ffmpeg release
@@ -1085,6 +1098,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_relay.py               # the panel on the web: relayed requests, the base path, the socket loop
 .venv/bin/python test_app.py                 # the desktop window: attach to a running panel or start one, the bundle's entry point
 .venv/bin/python test_updates.py             # the update notice: picking the newest release, the daily check, what each install is told
+.venv/bin/python test_selfupdate.py          # Update now: release addresses, checksum, version and chip checks, the swap and its rollbacks
 ```
 
 ## V2 roadmap
