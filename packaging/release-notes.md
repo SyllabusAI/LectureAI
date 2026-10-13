@@ -1,4 +1,4 @@
-**Syllabus {{version}} for Mac** (Apple silicon, macOS 13 or newer).
+**Syllabus {{version}} for Mac** (Apple silicon and Intel, macOS 13 or newer).
 
 **What's new**
 

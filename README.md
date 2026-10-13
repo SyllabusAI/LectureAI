@@ -84,8 +84,9 @@ drag Syllabus to Applications. Open Syllabus and it lands on its Setup page:
 sign in to a Syllabus account, pick a microphone, enter your class schedule,
 and connect Google Drive. A signed-in Mac holds no API key of its own; without
 an account, paste one key from OpenAI and one from Anthropic instead. It runs
-from the menu bar after that; nothing else to install. Apple silicon, macOS 13
-or newer.
+from the menu bar after that; nothing else to install. One download runs
+natively on both Apple silicon and Intel Macs with macOS 13 or newer; releases
+up to and including 0.6.2 run on Apple silicon only.
 
 Until the app is signed with an Apple Developer ID, the first time you open
 it macOS says it could not verify the app and offers only Done or Move to
@@ -1024,11 +1025,19 @@ is made from `intake/static/icon.png` at build time; `packaging/build/` and
 `dist/` are build output and stay out of git. Without a Developer ID identity
 in the keychain the result is signed ad hoc: it runs on the Mac that built it,
 and on another Mac only after the Gatekeeper steps in System Settings, Privacy
-& Security.
+& Security. A local build holds only this Mac's architecture (arm64 or
+x86_64); the universal app is made by the release workflow.
 
 Releases are cut by tag. Bump `__version__` in `intake/__init__.py`, merge,
 then tag that commit `vX.Y.Z` and push the tag: the "Release Syllabus.app"
-workflow builds the app on an Apple silicon runner, wraps it with
+workflow builds the app twice, natively on an Apple silicon runner and on an
+Intel runner, with one exact set of package versions picked by
+`packaging/pins.py`. `packaging/universal.py` joins the two with `lipo` into
+one universal app, refusing if the two builds' file lists differ or anything
+but compiled code does, and checks that every Mach-O file carries both an
+arm64 and an x86_64 slice. The joined app's self-test
+(`Syllabus --self-test`, which imports every compiled module and runs the
+bundled ffmpeg) runs on both kinds of Mac before the workflow wraps it with
 `packaging/dmg.sh`, and publishes the image and its checksum as a GitHub
 Release with the notes in `packaging/release-notes.md`. The tag has to match
 the version or the workflow refuses. Every running panel asks GitHub for the
@@ -1042,10 +1051,12 @@ made by `packaging/ffmpeg/build.sh` with the GPL and nonfree parts disabled
 and only what the pipeline uses enabled: the microphone input, the AAC
 encoder, the m4a and segment muxers, and decoders for the audio that lands in
 the inbox. That makes them LGPL 2.1; the license texts ride along inside the
-app. The "ffmpeg for Syllabus.app" workflow builds them on an Apple silicon
-runner and, when run from main with publish ticked, attaches the tarball to
-the GitHub Release named in `packaging/ffmpeg/release`; `packaging/build.sh`
-downloads that file and checks its sha256. `intake/tools.py` is how the
+app. The "ffmpeg for Syllabus.app" workflow builds them natively on an Apple
+silicon runner and on an Intel runner (for macOS 13 and newer), joins each
+pair with `lipo` (`packaging/ffmpeg/universal.sh`) and, when run from main
+with publish ticked, attaches the tarball to the GitHub Release named in
+`packaging/ffmpeg/release`; `packaging/ffmpeg/fetch.sh` downloads that file
+for `packaging/build.sh` and checks its sha256. `intake/tools.py` is how the
 pipeline finds them: the copy inside the app first, then a folder named in
 `$INTAKE_FFMPEG_DIR`, then PATH, so a checkout and a pipx install still use
 Homebrew's as before. Keeping the app resident and the release workflow for

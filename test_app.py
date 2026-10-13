@@ -111,6 +111,29 @@ def test_entry_dispatch():
     assert code == 7, code
 
 
+def test_entry_self_test_lists_compiled_modules():
+    import tempfile
+    root = Path(tempfile.mkdtemp())
+    for rel in ("python3__dot__12/lib-dynload/_ssl.cpython-312-darwin.so",
+                "pydantic_core/_pydantic_core.cpython-312-darwin.so",
+                "cryptography/hazmat/bindings/_rust.abi3.so",
+                "_watchdog_fsevents.cpython-312-darwin.so",
+                "libssl.3.dylib", "intake/__init__.py"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(b"")
+    assert entry.compiled_modules(str(root)) == [
+        "_ssl", "_watchdog_fsevents", "cryptography.hazmat.bindings._rust",
+        "pydantic_core._pydantic_core"], entry.compiled_modules(str(root))
+
+
+def test_entry_self_test_outside_a_bundle_fails():
+    # From a checkout there is no bundle to check, which must be a failure:
+    # a self-test that passes without testing anything is worse than none.
+    import contextlib, io
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        assert entry.main(["--self-test"]) == 1
+
+
 def test_entry_pins_the_profile():
     import os
     from intake import profiles
@@ -375,6 +398,8 @@ if __name__ == "__main__":
         run("window title and size", test_title_and_size),
         run("entry: no arguments is the app, arguments are the command", test_entry_dispatch),
         run("entry pins the syllabus profile", test_entry_pins_the_profile),
+        run("entry --self-test finds every compiled module", test_entry_self_test_lists_compiled_modules),
+        run("entry --self-test outside a bundle fails", test_entry_self_test_outside_a_bundle_fails),
         run("a running copy of the app is asked for its window", test_show_when_the_app_is_already_running),
         run("the menu's recording line", test_recording_line),
         run("the menu's items follow the panel's status", test_menu_items),

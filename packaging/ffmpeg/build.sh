@@ -1,7 +1,13 @@
 #!/bin/zsh
 # Build the ffmpeg and ffprobe that ship inside Syllabus.app.
 #
-#     packaging/ffmpeg/build.sh [output-dir]
+#     packaging/ffmpeg/build.sh [output-dir] [arm64|x86_64]
+#
+# The architecture defaults to this Mac's. Naming the other one cross-compiles
+# with the same clang (an x86_64 build on Apple silicon needs Rosetta for the
+# checks at the end, which run the result). Syllabus.app carries both: the
+# workflow builds each on its own runner and packaging/ffmpeg/universal.sh
+# joins them with lipo.
 #
 # A static build of a pinned ffmpeg release (see SOURCE below), configured
 # with only what the pipeline uses: the avfoundation microphone input, the
@@ -11,8 +17,9 @@
 # No third-party libraries: only macOS frameworks are linked, dynamically.
 #
 # Runs on any Mac with the Command Line Tools (clang, make); no Homebrew.
-# The release workflow (.github/workflows/ffmpeg.yml) runs this on a GitHub
-# arm64 runner and publishes the tarball, which packaging/build.sh downloads.
+# The workflow (.github/workflows/ffmpeg.yml) runs this on an Apple silicon
+# runner and on an Intel one, joins the two with universal.sh, and publishes
+# the tarball, which packaging/build.sh downloads.
 set -euo pipefail
 
 HERE="${0:A:h}"
@@ -22,14 +29,31 @@ SOURCE="https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.xz"
 OUT="${1:-$HERE/../build/ffmpeg}"
 OUT="${OUT:A}"
 WORK="${TMPDIR:-/tmp}/syllabus-ffmpeg-build"
-ARCH="$(uname -m)"
+HOST="$(uname -m)"
+ARCH="${2:-$HOST}"
+case "$ARCH" in
+    arm64) FF_ARCH=aarch64 ;;
+    x86_64) FF_ARCH=x86_64 ;;
+    *) echo "build.sh: unknown architecture $ARCH (arm64 or x86_64)" >&2; exit 1 ;;
+esac
+# The macOS the app supports (LSMinimumSystemVersion in syllabus.spec), so
+# neither slice uses an API that is newer.
+MIN_MACOS=13.0
+ARCH_FLAGS=(--arch="$FF_ARCH" --cc="clang -arch $ARCH" --cxx="clang++ -arch $ARCH")
+[[ "$ARCH" != "$HOST" ]] && ARCH_FLAGS+=(--enable-cross-compile --target-os=darwin)
+# Intel only: ffmpeg's hand-written x86 assembly needs nasm, which neither
+# runner image nor the Command Line Tools ship. The C versions of the same
+# routines are used instead; for mono speech at 64k that costs nothing a
+# person would notice. Apple silicon's NEON assembly is built in by clang.
+[[ "$ARCH" == "x86_64" ]] && ARCH_FLAGS+=(--disable-x86asm)
 
 mkdir -p "$WORK" "$OUT"
 cd "$WORK"
 
 if [[ ! -f "ffmpeg-${VERSION}.tar.xz" ]]; then
     echo "fetching $SOURCE"
-    curl -sfL -o "ffmpeg-${VERSION}.tar.xz" "$SOURCE"
+    # ffmpeg.org drops a connection now and then; one blip should not fail a build.
+    curl -sfL --retry 5 --retry-all-errors --connect-timeout 20 -o "ffmpeg-${VERSION}.tar.xz" "$SOURCE"
 fi
 echo "$SHA256  ffmpeg-${VERSION}.tar.xz" | shasum -a 256 -c -
 rm -rf "ffmpeg-${VERSION}"
@@ -47,6 +71,7 @@ cd "ffmpeg-${VERSION}"
 #   aresample/aformat   -ac 1 -ar 16000
 ./configure \
     --prefix="$PWD/out" \
+    "${ARCH_FLAGS[@]}" \
     --disable-everything --disable-gpl --disable-nonfree --disable-version3 \
     --disable-shared --enable-static --disable-doc --disable-debug \
     --disable-network --disable-autodetect --disable-ffplay \
@@ -61,8 +86,8 @@ cd "ffmpeg-${VERSION}"
     --enable-parser=aac,aac_latm,mpegaudio,flac,vorbis,opus \
     --enable-bsf=aac_adtstoasc \
     --enable-filter=aresample,aformat,anull,atrim,asetpts,volume,acopy,amix,pan,channelmap \
-    --extra-cflags="-O2" \
-    --extra-ldflags="-Wl,-dead_strip"
+    --extra-cflags="-O2 -mmacosx-version-min=$MIN_MACOS" \
+    --extra-ldflags="-Wl,-dead_strip -mmacosx-version-min=$MIN_MACOS"
 
 make -j"$(sysctl -n hw.ncpu)" >/dev/null
 make install >/dev/null
@@ -72,7 +97,7 @@ strip "$OUT/ffmpeg" "$OUT/ffprobe"
 cp LICENSE.md "$OUT/LICENSE.md"
 cp COPYING.LGPLv2.1 "$OUT/COPYING.LGPLv2.1"
 {
-    echo "ffmpeg $VERSION, built $(date -u +%Y-%m-%dT%H:%MZ) on $ARCH by packaging/ffmpeg/build.sh"
+    echo "ffmpeg $VERSION for $ARCH, built $(date -u +%Y-%m-%dT%H:%MZ) on $HOST by packaging/ffmpeg/build.sh"
     echo "source: $SOURCE (sha256 $SHA256)"
     echo "license: LGPL 2.1 or later; see COPYING.LGPLv2.1 and LICENSE.md"
     echo "configure:"
@@ -83,6 +108,9 @@ echo
 echo "built into $OUT"
 ls -la "$OUT" | awk 'NR>1{print "  " $5 "\t" $9}'
 "$OUT/ffmpeg" -version | head -1
+for f in ffmpeg ffprobe; do
+    [[ "$(lipo -archs "$OUT/$f")" == "$ARCH" ]] || { echo "$f is $(lipo -archs "$OUT/$f"), not $ARCH"; exit 1; }
+done
 "$OUT/ffmpeg" -version | grep -q "enable-gpl" && { echo "GPL crept in"; exit 1; }
 "$OUT/ffmpeg" -hide_banner -devices 2>/dev/null | grep -q "avfoundation" \
     || { echo "the avfoundation microphone input is missing"; exit 1; }

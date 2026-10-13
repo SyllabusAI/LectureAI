@@ -1,3 +1,3 @@
-tag=ffmpeg-8.1.2-1
-asset=ffmpeg-8.1.2-arm64.tar.gz
-sha256=9411084b3e3685b21a585cb67f2d658a4cb2bfa0ab126247b6aa16e90f726fc6
+tag=ffmpeg-8.1.2-2
+asset=ffmpeg-8.1.2-universal.tar.gz
+sha256=
