@@ -21,7 +21,8 @@ rather than the first, when:
   - any other file differs, except a wheel's own tag and hash list
     (*.dist-info/WHEEL and RECORD), which name the architecture by design,
     and a code seal (_CodeSignature/CodeResources), which is made again; a
-    zip file (base_library.zip) is compared member by member;
+    zip file (base_library.zip) is compared member by member, and ffmpeg's
+    BUILD.txt, if each side built its own ffmpeg, keeps both sides' notes;
   - the Python code PyInstaller packed into the two main executables differs.
 Every Mach-O becomes one file with both slices (`lipo -create`, arm64 from
 the Apple silicon build and x86_64 from the Intel one, even where a wheel
@@ -56,6 +57,12 @@ MAIN_EXECUTABLE = "Contents/MacOS/Syllabus"
 # code signature's CodeResources lists the hashes of the files it seals, and
 # every seal is made again after the join.
 ALLOWED_TO_DIFFER = re.compile(r"(\.dist-info/(WHEEL|RECORD)|/_CodeSignature/CodeResources)$")
+
+# Build notes that may differ, and are kept from both sides, one after the
+# other: ffmpeg's BUILD.txt, when each build compiled its own ffmpeg (a run
+# that publishes nothing, before the universal ffmpeg release is pinned; the
+# pinned tarball is the same file on both sides).
+NOTES_JOINED = re.compile(r"/ffmpeg/BUILD\.txt$")
 
 # Python modules (packed in the main executable or in a zip) that may differ:
 # the build configuration module records the architecture the interpreter
@@ -229,6 +236,12 @@ def merge(arm: Path, x86: Path, out: Path) -> int:
                 shutil.copymode(src_a, dst)
                 joined += 1
                 continue
+            if not filecmp.cmp(src_a, src_b, shallow=False) and NOTES_JOINED.search(rel):
+                dst.write_bytes(b"arm64 slice:\n" + src_a.read_bytes() +
+                                b"\nx86_64 slice:\n" + src_b.read_bytes())
+                shutil.copymode(src_a, dst)
+                differing.append(rel)
+                continue
             if not filecmp.cmp(src_a, src_b, shallow=False):
                 members = zip_differences(src_a, src_b)
                 if ALLOWED_TO_DIFFER.search(rel) or members == []:
@@ -260,7 +273,7 @@ def merge(arm: Path, x86: Path, out: Path) -> int:
 
     print(f"joined {joined} Mach-O files and copied {copied} others into {out}")
     if differing:
-        print(f"  {len(differing)} files differ only by design (wheel tags, seals, zip order); "
+        print(f"  {len(differing)} files differ only by design (wheel tags, seals, zip order, build notes); "
               f"kept the arm64 copies: {', '.join(differing)}")
     print(f"  the main executable's slices, in file order: {' '.join(archs(out / MAIN_EXECUTABLE))}")
     return check(out)

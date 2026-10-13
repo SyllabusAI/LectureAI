@@ -78,6 +78,8 @@ def test_what_may_differ():
     assert not allowed("Contents/Resources/base_library.zip")
     assert not allowed("Contents/Info.plist")
     module = universal.MODULE_ALLOWED_TO_DIFFER.search
+    assert universal.NOTES_JOINED.search("Contents/Resources/ffmpeg/BUILD.txt")
+    assert not universal.NOTES_JOINED.search("Contents/Resources/ffmpeg/LICENSE.md")
     assert module("_sysconfigdata__darwin_darwin")
     assert not module("sysconfig") and not module("intake.cli")
 
@@ -133,6 +135,8 @@ def fake_app(root: Path, arch: str, *, minos="13.0") -> Path:
     (c / "Resources" / "pkg-1.0.dist-info" / "WHEEL").write_text(
         f"Tag: cp312-cp312-macosx_11_0_{arch}\n")
     os.symlink("../Resources/pkg-1.0.dist-info", c / "Frameworks" / "pkg-1.0.dist-info")
+    (c / "Resources" / "ffmpeg").mkdir()
+    (c / "Resources" / "ffmpeg" / "BUILD.txt").write_text(f"ffmpeg for {arch}\n")
     members = [("a.pyc", b"a"), ("b.pyc", b"b")]
     _zip(c / "Resources" / "base_library.zip", members if arch == "arm64" else members[::-1])
     os.symlink("../Resources/base_library.zip", c / "Frameworks" / "base_library.zip")
@@ -164,6 +168,8 @@ def test_join_makes_every_macho_universal():
         assert sorted(universal.archs(c / rel)) == ["arm64", "x86_64"], rel
     assert os.readlink(c / "Frameworks" / "base_library.zip") == "../Resources/base_library.zip"
     assert (c / "Resources/pkg-1.0.dist-info/WHEEL").read_text().endswith("arm64\n")
+    notes = (c / "Resources/ffmpeg/BUILD.txt").read_text()
+    assert "ffmpeg for arm64" in notes and "ffmpeg for x86_64" in notes, notes
     assert os.access(c / "MacOS" / "Syllabus", os.X_OK)
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(out)], check=True)
     # This Mac's own slice runs.
