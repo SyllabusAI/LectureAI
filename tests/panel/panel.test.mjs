@@ -745,4 +745,78 @@ await run("the Setup page warns not to close the lid while recording", async () 
   await page.close();
 });
 
+// --- Update now: one click from the notice to the new version -------------
+
+/** The status route with an update out, and whatever the installer says. */
+function withUpdate(update = {}) {
+  const base = like("/api/status");
+  return { ...base, update: {
+    ...base.update, available: true, version: "9.9.9", how: "download",
+    url: "https://github.com/SyllabusAI/LectureAI/releases/download/v9.9.9/Syllabus-9.9.9.dmg",
+    oneclick: true, install: { state: "", version: "", error: "", done: 0, total: 0 },
+    ...update } };
+}
+
+await run("the update notice offers Update now in the app, and posts it", async () => {
+  let status = withUpdate();
+  const posted = [];
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": () => status,
+      "/api/update/install": (body) => { posted.push(body); return { ok: true }; },
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  const banner = page.$("updateBanner");
+  assert(banner.style.display === "block", "no notice for a newer version");
+  const button = page.$("updateNow");
+  assert(button && button.textContent === "Update now", banner.textContent);
+  assert(banner.querySelector("a").href.endsWith("Syllabus-9.9.9.dmg"), "the download link is gone");
+
+  // The poll runs every second; an unchanged notice keeps the same button.
+  await page.window.poll();
+  await page.settle();
+  assert(page.$("updateNow") === button, "the button was rebuilt under the pointer");
+
+  status = withUpdate({ install: { state: "downloading", version: "9.9.9", error: "", done: 50, total: 200 } });
+  button.click();
+  await page.settle();
+  equal(posted.length, 1, "Update now did not ask the panel");
+  assert(/Downloading Syllabus 9\.9\.9 \(25%\)/.test(banner.textContent), banner.textContent);
+  assert(!page.$("updateNow"), "a second Update now while one runs");
+
+  status = withUpdate({ install: { state: "installing", version: "9.9.9", error: "", done: 0, total: 0 } });
+  await page.window.poll();
+  await page.settle();
+  assert(/close and open again/.test(banner.textContent), banner.textContent);
+  await page.close();
+});
+
+await run("a failed update says why, keeps the old version, and offers to try again", async () => {
+  const status = withUpdate({ install: { state: "failed", version: "9.9.9",
+    error: "the download does not match its checksum", done: 0, total: 0 } });
+  const page = loadPage(DIR, "index.html", { routes: indexRoutes({ "/api/status": status }) });
+  await page.window.poll();
+  await page.settle();
+  const banner = page.$("updateBanner");
+  assert(/does not match its checksum/.test(banner.textContent), banner.textContent);
+  assert(/still installed/.test(banner.textContent), banner.textContent);
+  assert(banner.classList.contains("err"), "a failure is not shown as one");
+  equal(page.$("updateNow").textContent, "Try again", "no way to try again");
+  assert(!/\u2014/.test(banner.textContent), "an em dash in the notice");
+  await page.close();
+});
+
+await run("without one-click updates the notice links to the download, as before", async () => {
+  const status = withUpdate({ oneclick: false });
+  const page = loadPage(DIR, "index.html", { routes: indexRoutes({ "/api/status": status }) });
+  await page.window.poll();
+  await page.settle();
+  const banner = page.$("updateBanner");
+  assert(!page.$("updateNow"), "Update now offered where the app cannot update itself");
+  assert(/replace the copy in Applications/.test(banner.textContent), banner.textContent);
+  await page.close();
+});
+
 finish();

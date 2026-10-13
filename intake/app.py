@@ -199,6 +199,9 @@ def menu_items(status: dict | None, attached: bool, login_installed: bool,
     if self_update:
         items.append({"title": "Check for Updates…", "action": "sparkle_check",
                       "enabled": True, "checked": False})
+    elif update.get("available") and update.get("oneclick"):
+        items.append({"title": f"Update to {title()} {update.get('version')}…",
+                      "action": "update_now", "enabled": True, "checked": False})
     elif update.get("available") and update.get("how") == "download":
         items.append({"title": f"Download {title()} {update.get('version')}…",
                       "action": "update", "enabled": True, "checked": False})
@@ -390,11 +393,21 @@ class Resident:
             url = ((status.get("update") or {}).get("url")) or ""
             if url:
                 webbrowser.open(url)
+        elif action == "update_now":
+            # The window shows how far the update has got, or why it stopped.
+            self._show_main()
+            self._call("/api/update/install")
         elif action == "sparkle_check":
             from intake import sparkle
             sparkle.check_now()
         elif action == "quit":
             self.quit()
+
+    def quit_for_update(self) -> None:
+        """Quit so the swap script can put the new version in place. Any
+        thread; the quit itself runs on the main one."""
+        from PyObjCTools import AppHelper
+        AppHelper.callAfter(self.quit, False)
 
     def _call(self, path: str) -> None:
         try:
@@ -514,6 +527,8 @@ def main(argv: list[str] | None = None) -> int:
     if not attached:
         from intake import gui
         gui.window_hooks["show"] = resident.show
+        # Update now (selfupdate.py) quits the app once the new copy is ready.
+        gui.window_hooks["quit"] = resident.quit_for_update
     resident.run()
     return 0
 

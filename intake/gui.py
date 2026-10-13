@@ -38,7 +38,7 @@ from flask import Flask, g, jsonify, render_template, request
 from intake import account, assistant, cancellations, config, doctor, insights, relay, service, setup_wizard
 from intake import calendars
 from intake import logfiles, signin, sync
-from intake import updates
+from intake import selfupdate, updates
 from intake import notion_tasks
 from intake import record as recording
 from intake import transcribe
@@ -482,8 +482,55 @@ def status():
         "window": "show" in window_hooks,
         # Whether a newer Syllabus has been released, from the file the daily
         # check writes (updates.py). Never the network.
-        "update": updates.status(),
+        "update": _update_status(),
     })
+
+
+def _update_status() -> dict:
+    """The notice, plus whether this copy can update itself in one click
+    (selfupdate.py) and how far an update under way has got."""
+    out = updates.status()
+    out["oneclick"] = _oneclick()
+    out["install"] = selfupdate.installer.snapshot()
+    return out
+
+
+def _oneclick() -> bool:
+    """Only in the app that owns this panel, and only for someone at this Mac:
+    an update quits the app, which is not for a phone through the relay."""
+    return "quit" in window_hooks and not g.get("viewer") and selfupdate.supported()
+
+
+def _update_blocker() -> str:
+    """What has to finish before the app may quit for an update, or ""."""
+    rec = _current_recorder()
+    if rec is not None and rec.is_recording:
+        return "a recording is under way. Update after it ends"
+    if _processing(_watcher_pid()) is not None:
+        return "a lecture is being processed. Update after it is filed"
+    return ""
+
+
+@app.post("/api/update/install")
+def update_install():
+    """Update now: download, check, and swap in the newer release, then
+    quit so it can open in this one's place."""
+    status = updates.status()
+    if not status["available"]:
+        return jsonify({"ok": False, "error": "this is already the newest version"}), 409
+    if not _oneclick():
+        return jsonify({"ok": False, "error": "this copy cannot update itself; "
+                        "download the new version instead"}), 409
+
+    def watcher() -> tuple[int | None, bool]:
+        pid = _watcher_pid()
+        return pid, pid is not None and selfupdate.runs_from(pid, selfupdate.bundle_path())
+
+    error = selfupdate.installer.start(status["version"], busy=_update_blocker,
+                                       quit_app=window_hooks["quit"], watcher=watcher)
+    if error:
+        return jsonify({"ok": False, "error": error}), 409
+    return jsonify({"ok": True, "install": selfupdate.installer.snapshot()})
 
 
 @app.get("/api/allowance")
@@ -1294,6 +1341,8 @@ def prepare(host: str, port: int) -> str:
     relay.start(app)
     # Once a day, from a thread: is there a newer Syllabus to point at.
     updates.check_later()
+    # What an interrupted Update now left beside the app, if anything.
+    selfupdate.cleanup_later()
     return url
 
 
