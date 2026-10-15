@@ -1119,7 +1119,7 @@ function renderRecord(s) {
     $("recMeta").innerHTML = `<strong>${escapeHtml(r.planned)}</strong><br>${escapeHtml(r.device)}${size}${warn}`;
     $("recNote").textContent = r.resumed
       ? "Started by an earlier panel and still going; nothing was lost. Click to stop and file it."
-      : "Click again to stop. Closing the lid ends the recording, so press Stop first.";
+      : "Click again to stop. Closing the lid stops it too, and it is saved when you open the lid again.";
     levels.className = "levels " + (r.stalled ? "flat" : "live");
     $("levelsLabel").textContent = r.stalled ? "No audio is reaching the file" : "Audio arriving";
     if (r.stalled && !warnedStalled) {

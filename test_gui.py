@@ -948,7 +948,7 @@ def t30():
         staging.unlink(missing_ok=True)
     html = client.get("/").get_data(as_text=True)
     assert "rec-warn" in html and "r.stalled" in html, "the page never shows the warning"
-    assert "Closing the lid ends the recording" in html, "the page does not warn about the lid"
+    assert "Closing the lid stops it too" in html, "the page does not mention the lid"
 results.append(run("a stalled recording is reported to the page, which warns about the lid too", t30))
 
 
@@ -1819,6 +1819,40 @@ def t55():
     assert signin.html.escape("<") == "&lt;"
 results.append(run("a refusal page escapes the host it names", t55))
 
+
+
+def t56():
+    # Lid closed mid-lecture: the panel's sleep check stops and files the
+    # recording once the Mac is awake and audio is arriving again.
+    import subprocess
+    from datetime import datetime as _dt
+    rec_mod = gui.recording
+    staging = config.WORK_DIR / "recording_20261015-123500.m4a"
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.write_bytes(b"x" * 500)
+    proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    rec = rec_mod.Recorder(course="ENTR-3306")
+    rec.started = _dt(2026, 10, 15, 12, 35)
+    rec._staging, rec._proc = staging, proc
+    gui._recorder = rec
+    try:
+        assert gui.stop_if_slept(False) is None, "stopped with no sleep"
+        assert gui.stop_if_slept(True) is None, "stopped while still asleep"
+        assert gui._recorder is rec and proc.poll() is None
+        staging.write_bytes(b"x" * 900)          # the mic is delivering again
+        filed = gui.stop_if_slept(False)
+        assert filed is not None, "the recording was not stopped after wake"
+        assert filed.name == "ENTR-3306_2026-10-15_1235.m4a", filed
+        assert filed.exists() and not staging.exists()
+        assert proc.poll() is not None, "ffmpeg is still running"
+        assert gui._recorder is None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        staging.unlink(missing_ok=True)
+        gui._recorder = None
+results.append(run("closing the lid stops and files the recording once the Mac wakes", t56))
 
 print()
 print(f"{sum(results)}/{len(results)} passed")

@@ -29,6 +29,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from datetime import date, datetime
 from pathlib import Path
@@ -118,6 +119,43 @@ def _current_recorder() -> recording.Recorder | None:
                 _say(f"picking up a recording already running since "
                      f"{_recorder.started:%H:%M} (pid {_recorder._proc.pid})")
         return _recorder
+
+
+def stop_if_slept(slept: bool) -> Path | None:
+    """Stop and file the recording if the Mac slept during it (lid closed).
+
+    `slept` is SleepWatch.slept(); the recorder decides when stopping is
+    safe (see Recorder.slept_through). Returns the inbox path when filed.
+    """
+    global _recorder
+    with _recording_lock:
+        rec = _current_recorder()
+        if rec is None or not rec.slept_through(slept):
+            return None
+        _recorder = None
+        try:
+            destination = rec.stop()
+        except Exception as exc:
+            _say(f"the Mac slept mid-recording; stopping it failed: {exc}")
+            return None
+    _say(f"the Mac slept mid-recording (lid closed?); stopped and filed "
+         f"{destination.name}")
+    return destination
+
+
+def _watch_for_sleep(interval: float = 5.0) -> None:
+    """Runs for the life of the panel: ends a recording the lid closed on.
+
+    Nobody has to have the window open; the panel runs as a login service
+    and this is the only part of it that is awake for the recording.
+    """
+    watch = recording.SleepWatch()
+    while True:
+        time.sleep(interval)
+        try:
+            stop_if_slept(watch.slept())
+        except Exception as exc:  # never let the thread die mid-semester
+            _say(f"sleep check failed: {exc}")
 
 
 def _reap_children() -> None:
@@ -1339,6 +1377,9 @@ def prepare(host: str, port: int) -> str:
     # open from a thread, over which browsers at this Mac's address reach
     # it. Nothing without an account; it waits for one.
     relay.start(app)
+    # Closing the lid mid-recording stops it, once the Mac is awake again.
+    threading.Thread(target=_watch_for_sleep, name="sleep-watch",
+                     daemon=True).start()
     # Once a day, from a thread: is there a newer Syllabus to point at.
     updates.check_later()
     # What an interrupted Update now left beside the app, if anything.

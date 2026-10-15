@@ -563,11 +563,16 @@ Three things worth knowing:
   in connection order, so index 0 is often a nearby iPhone rather than the
   built-in mic. `intake setup` picks by name; so does `RECORD_DEVICE` in
   `~/.intake/syllabus/.env`.
-- **Press Stop before closing the lid.** Sleep ends the capture. The Mac is
-  held awake for as long as ffmpeg runs (`caffeinate -w`, started alongside
-  it), so a dimmed display or an idle timer cannot end a lecture early, but
-  nothing can hold a closed lid open. A recording cut off by sleep is still
-  filed with whatever it captured up to that point.
+- **Closing the lid stops the recording.** The Mac is held awake for as long
+  as ffmpeg runs (`caffeinate -w`, started alongside it), so a dimmed display
+  or an idle timer cannot end a lecture early, but nothing can hold a closed
+  lid open. ffmpeg survives the sleep and would carry on recording once the
+  lid opens, so the panel (and `intake record`) notices the sleep, by the
+  wall clock jumping ahead of the monotonic one, and stops and files the
+  recording as soon as audio flows again after wake. It cannot stop it any
+  sooner: asleep, ffmpeg is blocked on the mic and only killing it would end
+  it, which loses the file. Press Stop first to have the lecture filed at
+  once.
 
 Stopping with Ctrl-C is the supported way to end a recording: it lets ffmpeg
 write the file's trailer. Killing the process instead leaves an m4a nothing can

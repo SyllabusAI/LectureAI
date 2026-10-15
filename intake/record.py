@@ -290,7 +290,7 @@ def _keep_awake(pid: int) -> None:
     so a lecture recorded on battery with the display dimmed can end early
     without anyone touching the keyboard. caffeinate -w holds the assertion
     for exactly as long as ffmpeg lives and needs no cleanup. It cannot stop
-    a closed lid; the panel's note and the README cover that.
+    a closed lid; SleepWatch and Recorder.slept_through cover that.
     """
     if shutil.which("caffeinate") is None:
         return
@@ -302,6 +302,33 @@ def _keep_awake(pid: int) -> None:
         )
     except OSError as exc:
         log(f"  could not start caffeinate: {exc}")
+
+
+# A gap this long between the two clocks is the Mac having slept. Well past
+# anything a time sync or a busy machine produces between two looks.
+SLEEP_GAP_SECONDS = 60
+
+
+class SleepWatch:
+    """Notices, after the fact, that the Mac went to sleep.
+
+    time.time() keeps counting while the Mac sleeps and time.monotonic() does
+    not (it is mach_absolute_time on macOS), so the wall clock running ahead
+    of the monotonic one between two looks is time spent asleep. Nothing
+    needs to be registered with the OS and nothing is missed while this
+    process is suspended along with everything else.
+    """
+
+    def __init__(self, wall=time.time, monotonic=time.monotonic):
+        self._wall, self._monotonic = wall, monotonic
+        self._last = (wall(), monotonic())
+
+    def slept(self) -> bool:
+        """Whether the Mac slept since the last call (or since construction)."""
+        wall, mono = self._wall(), self._monotonic()
+        last_wall, last_mono = self._last
+        self._last = (wall, mono)
+        return (wall - last_wall) - (mono - last_mono) >= SLEEP_GAP_SECONDS
 
 
 class Recorder:
@@ -324,6 +351,9 @@ class Recorder:
         self._proc: subprocess.Popen | _ExternalProcess | None = None
         self._staging: Path | None = None
         self._errors: Path | None = None
+        # The file's size when a sleep was noticed mid-recording, None until
+        # one is. See slept_through.
+        self._size_at_sleep: int | None = None
 
     @property
     def is_recording(self) -> bool:
@@ -371,6 +401,28 @@ class Recorder:
                 f"open but delivering nothing. Check System Settings > Privacy "
                 f"& Security > Microphone for the app that launched this, or "
                 f"stop and pick another microphone.")
+
+    def slept_through(self, slept: bool) -> bool:
+        """Whether to stop now because the Mac slept during this recording.
+
+        Closing the lid sleeps the Mac, but ffmpeg survives sleep: the mic
+        goes quiet, and when the lid opens it delivers again and the capture
+        carries on. The lecture then ends with whatever happened after the
+        lid opened, joined on with no sign of the gap, and the recording runs
+        until someone notices it is still going. Closing the lid is how
+        people end a class, so it ends the recording.
+
+        Not at once, though. While the Mac sleeps or is in a dark wake,
+        ffmpeg is blocked waiting on the mic and cannot act on SIGINT, and
+        _stop would end up killing it and losing the whole file. So the sleep
+        is noted with the file's size, and the answer is yes only once the
+        file grows past it: audio is flowing again, and ffmpeg will finalize.
+        `slept` is SleepWatch.slept() from whoever is polling.
+        """
+        if slept and self._size_at_sleep is None and self.is_recording:
+            self._size_at_sleep = self.staged_bytes
+        return (self._size_at_sleep is not None and self.is_recording
+                and self.staged_bytes > self._size_at_sleep)
 
     def start(self, max_minutes: float | None = None) -> None:
         """Open the microphone and begin writing to .work/.
@@ -600,6 +652,7 @@ def record(
 
     deadline = time.monotonic() + limit * 60 if limit else None
     warned = False
+    sleep_watch = SleepWatch()
     try:
         while recorder.is_recording:
             elapsed = str(datetime.now() - started).split(".")[0]
@@ -615,6 +668,9 @@ def record(
                   end="", file=sys.stderr, flush=True)
             if deadline and time.monotonic() >= deadline:
                 log("\n  reached the time limit; stopping")
+                break
+            if recorder.slept_through(sleep_watch.slept()):
+                log("\n  the Mac slept (lid closed?); stopping")
                 break
             time.sleep(1)
     except KeyboardInterrupt:
