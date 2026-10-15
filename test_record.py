@@ -888,6 +888,48 @@ def t32():
 results.append(run("a short recording is checked for truncation as well", t32))
 
 
+
+def t33():
+    # The wall clock runs on through sleep; the monotonic one stands still.
+    clock = {"wall": 1000.0, "mono": 50.0}
+    watch = record.SleepWatch(wall=lambda: clock["wall"], monotonic=lambda: clock["mono"])
+    clock["wall"] += 5; clock["mono"] += 5
+    assert watch.slept() is False, "awake ticks read as sleep"
+    clock["wall"] += 20; clock["mono"] += 0.5     # a small time sync is not sleep
+    assert watch.slept() is False, "a small clock correction read as sleep"
+    clock["wall"] += 32 * 60; clock["mono"] += 3  # lid shut for 32 minutes
+    assert watch.slept() is True, "a 32 minute sleep was missed"
+    clock["wall"] += 5; clock["mono"] += 5
+    assert watch.slept() is False, "one sleep was reported twice"
+results.append(run("SleepWatch notices the Mac sleeping, once", t33))
+
+
+def t34():
+    # Lid closed mid-lecture: stop only once audio flows again after wake,
+    # because ffmpeg asleep cannot act on SIGINT and would have to be killed.
+    class Alive:
+        pid = 4242
+        def poll(self):
+            return None
+
+    staging = config.WORK_DIR / "recording_lid.m4a"
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.write_bytes(b"x" * 1000)
+    rec = record.Recorder(course="ENTR-3306")
+    rec.started = datetime.now()
+    rec._staging, rec._proc = staging, Alive()
+    try:
+        assert rec.slept_through(False) is False, "stopped with no sleep"
+        staging.write_bytes(b"x" * 2000)
+        assert rec.slept_through(False) is False, "growth alone stopped it"
+        assert rec.slept_through(True) is False, "stopped while the mic may still be asleep"
+        assert rec.slept_through(False) is False, "stopped before any audio after wake"
+        staging.write_bytes(b"x" * 2100)
+        assert rec.slept_through(False) is True, "audio after wake did not stop it"
+    finally:
+        staging.unlink(missing_ok=True)
+results.append(run("a recording the lid closed on stops once audio returns", t34))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -731,17 +731,17 @@ await run("the Tour button replays it, Esc closes it, and missing cards are skip
   await page.close();
 });
 
-// --- The lid: sleep ends a recording, and caffeinate cannot stop it --------
+// --- The lid: closing it stops the recording, saved once the Mac wakes ----
 
-await run("the Setup page warns not to close the lid while recording", async () => {
+await run("the Setup page says closing the lid stops the recording", async () => {
   const page = loadPage(DIR, "setup.html", { routes: setupRoutes() });
   await page.window.load();
   await page.settle();
   const warning = page.$("lidWarning");
   assert(warning, "the Setup page has no lid warning");
   assert(!warning.hidden, "the lid warning is hidden");
-  assert(/close the lid while recording/i.test(warning.textContent),
-    `the lid warning does not say what to avoid: ${warning.textContent}`);
+  assert(/closing the lid stops the recording/i.test(warning.textContent),
+    `the lid note does not say what closing it does: ${warning.textContent}`);
   await page.close();
 });
 
